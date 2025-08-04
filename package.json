@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@types/jsonwebtoken": "^9.0.10",
+    "iron-session": "^8.0.4",
     "jsonwebtoken": "^9.0.2",
     "next": "15.4.1",
     "react": "19.1.0",

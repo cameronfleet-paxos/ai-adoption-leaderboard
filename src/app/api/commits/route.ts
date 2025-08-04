@@ -1,15 +1,42 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { fetchCommitData } from '@/lib/github';
+import { fetchCommitData, Repository } from '@/lib/github';
+import { getSession, isSessionValid } from '@/lib/session';
 
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
-    const { dateRange, repositories, installationId } = body;
+    // Validate session first
+    const response = NextResponse.next();
+    const session = await getSession(request, response);
 
-    if (!installationId || !repositories || repositories.length === 0) {
+    if (!isSessionValid(session)) {
       return NextResponse.json(
-        { error: 'Missing required parameters' },
+        { error: 'Authentication required. Please log in again.' },
+        { status: 401 }
+      );
+    }
+
+    const body = await request.json();
+    const { dateRange, repositories } = body;
+
+    // Use session data instead of request body for security
+    const { installationId, repositories: sessionRepos } = session;
+
+    if (!repositories || repositories.length === 0) {
+      return NextResponse.json(
+        { error: 'No repositories selected' },
         { status: 400 }
+      );
+    }
+
+    // Validate that requested repositories are in the user's session
+    const allowedRepoNames = sessionRepos?.map(repo => repo.name) || [];
+    const requestedRepoNames = repositories.map((repo: Repository) => repo.name);
+    const unauthorizedRepos = requestedRepoNames.filter((name: string) => !allowedRepoNames.includes(name));
+
+    if (unauthorizedRepos.length > 0) {
+      return NextResponse.json(
+        { error: `Unauthorized access to repositories: ${unauthorizedRepos.join(', ')}` },
+        { status: 403 }
       );
     }
 
@@ -19,7 +46,7 @@ export async function POST(request: NextRequest) {
         end: new Date(dateRange.endDate)
       },
       repositories,
-      installationId
+      installationId!
     );
 
     return NextResponse.json(result);

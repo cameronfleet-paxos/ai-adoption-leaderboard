@@ -56,30 +56,40 @@ function HomeContent() {
   const [dateRange, setDateRange] = useState(getDefaultDateRange());
   const [selectedRepos, setSelectedRepos] = useState<string[]>([]);
 
-  // Parse URL parameters on component mount
+  // Fetch session data on component mount
   useEffect(() => {
     const errorParam = searchParams.get('error');
-    const installationParam = searchParams.get('installation_id');
-    const repositoriesParam = searchParams.get('repositories');
-
+    
     if (errorParam) {
       setError(decodeURIComponent(errorParam));
       return;
     }
 
-    if (installationParam && repositoriesParam) {
+    // Fetch session data from API
+    const fetchSession = async () => {
       try {
-        const parsedRepos: Repository[] = JSON.parse(repositoriesParam);
-        setInstallationId(parseInt(installationParam));
-        setRepositories(parsedRepos);
-        setSelectedRepos(parsedRepos.map(repo => repo.name));
-        setIsAuthenticated(true);
-        setError(null);
+        const response = await fetch('/api/session');
+        const sessionData = await response.json();
+        
+        if (sessionData.isAuthenticated) {
+          setInstallationId(sessionData.installationId);
+          setRepositories(sessionData.repositories);
+          setSelectedRepos(sessionData.repositories.map((repo: Repository) => repo.name));
+          setIsAuthenticated(true);
+          setError(null);
+        } else {
+          setIsAuthenticated(false);
+          setInstallationId(null);
+          setRepositories([]);
+          setSelectedRepos([]);
+        }
       } catch (error) {
-        console.error('Failed to parse repository data:', error);
-        setError('Failed to process authorization data');
+        console.error('Failed to fetch session data:', error);
+        setError('Failed to load authentication state');
       }
-    }
+    };
+    
+    fetchSession();
   }, [searchParams]);
 
   const fetchData = useCallback(async () => {
@@ -108,8 +118,7 @@ function HomeContent() {
             startDate: dateRange.startDate,
             endDate: dateRange.endDate
           },
-          repositories: reposToFetch,
-          installationId
+          repositories: reposToFetch
         })
       });
 
@@ -142,6 +151,19 @@ function HomeContent() {
 
   const handleConnect = () => {
     window.location.href = '/api/github/auth';
+  };
+
+  const handleLogout = async () => {
+    try {
+      await fetch('/api/session', { method: 'DELETE' });
+      setIsAuthenticated(false);
+      setInstallationId(null);
+      setRepositories([]);
+      setSelectedRepos([]);
+      setError(null);
+    } catch (error) {
+      console.error('Logout failed:', error);
+    }
   };
 
   // Remove unused handler - keeping for potential future use
@@ -241,6 +263,12 @@ function HomeContent() {
                 className="text-xs bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded transition-colors"
               >
                 Add Organizations
+              </button>
+              <button
+                onClick={handleLogout}
+                className="text-xs bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded transition-colors"
+              >
+                Logout
               </button>
             </div>
           </div>
