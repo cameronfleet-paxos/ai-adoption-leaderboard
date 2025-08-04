@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 
 interface DateRangeSelectorProps {
   startDate: string;
@@ -10,25 +10,6 @@ interface DateRangeSelectorProps {
 
 export function DateRangeSelector({ startDate, endDate, onDateChange, onRefresh, isLoading = false }: DateRangeSelectorProps) {
   const [activePreset, setActivePreset] = useState<string>('week');
-  
-  // Detect which preset is active based on the date range
-  useEffect(() => {
-    const now = new Date();
-    const start = new Date(startDate);
-    const daysDiff = Math.floor((now.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
-    
-    if (daysDiff >= 360 && daysDiff <= 370) {
-      setActivePreset('year');
-    } else if (daysDiff >= 85 && daysDiff <= 95) {
-      setActivePreset('quarter');
-    } else if (daysDiff >= 28 && daysDiff <= 32) {
-      setActivePreset('month');
-    } else if (daysDiff >= 6 && daysDiff <= 8) {
-      setActivePreset('week');
-    } else {
-      setActivePreset('custom');
-    }
-  }, [startDate, endDate]);
 
   const handlePresetSelect = (preset: string) => {
     setActivePreset(preset);
@@ -110,7 +91,11 @@ export function DateRangeSelector({ startDate, endDate, onDateChange, onRefresh,
               setActivePreset('custom');
               onDateChange(e.target.value, endDate);
             }}
-            className="px-3 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            className={`px-3 py-1 text-sm border rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+              activePreset === 'custom' 
+                ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20' 
+                : 'border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700'
+            } text-gray-900 dark:text-white`}
           />
           
           <label className="text-sm text-gray-600 dark:text-gray-400">To:</label>
@@ -121,7 +106,11 @@ export function DateRangeSelector({ startDate, endDate, onDateChange, onRefresh,
               setActivePreset('custom');
               onDateChange(startDate, e.target.value);
             }}
-            className="px-3 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            className={`px-3 py-1 text-sm border rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+              activePreset === 'custom' 
+                ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20' 
+                : 'border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700'
+            } text-gray-900 dark:text-white`}
           />
           
           <button
