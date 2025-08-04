@@ -27,8 +27,7 @@ export async function GET(request: NextRequest) {
     const { installationId, repositories } = await githubApp.exchangeCodeForInstallation(code);
 
     // Prepare repository data for URL parameters
-    const repoNames = repositories.map(repo => repo.name);
-    const repoData = repositories.map(repo => ({
+    const repoData = (repositories || []).map(repo => ({
       owner: repo.owner.login,
       name: repo.name,
       displayName: repo.name

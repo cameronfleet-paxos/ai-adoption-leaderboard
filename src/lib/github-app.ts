@@ -23,10 +23,10 @@ interface InstallationToken {
 }
 
 export class GitHubAppAuth {
-  private appId: string;
-  private privateKey: string;
-  private clientId: string;
-  private clientSecret: string;
+  private appId: string = '';
+  private privateKey: string = '';
+  private clientId: string = '';
+  private clientSecret: string = '';
 
   constructor() {
     // Defer environment variable loading to when they're actually needed
@@ -123,7 +123,7 @@ export class GitHubAppAuth {
   /**
    * Exchange OAuth code for installation information
    */
-  async exchangeCodeForInstallation(code: string): Promise<{ installationId: number; repositories: any[] }> {
+  async exchangeCodeForInstallation(code: string): Promise<{ installationId: number; repositories: GitHubInstallation['repositories'] }> {
     this.loadEnvVars();
     
     // First, exchange code for access token
@@ -172,7 +172,7 @@ export class GitHubAppAuth {
     }
 
     // Get all repositories from all installations
-    let allRepositories: any[] = [];
+    const allRepositories: NonNullable<GitHubInstallation['repositories']> = [];
     let primaryInstallationId = installationsData.installations[0].id;
 
     for (const installation of installationsData.installations) {

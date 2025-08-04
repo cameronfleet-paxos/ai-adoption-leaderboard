@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Leaderboard } from '@/components/Leaderboard';
 import { StatsCards } from '@/components/StatsCards';
@@ -9,7 +9,7 @@ import { DateRangeSelector } from '@/components/DateRangeSelector';
 import { RepositorySelector } from '@/components/RepositorySelector';
 import { Repository } from '@/lib/github';
 
-export default function Home() {
+function HomeContent() {
   const searchParams = useSearchParams();
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -139,15 +139,16 @@ export default function Home() {
     window.location.href = '/api/github/auth';
   };
 
-  const handleReconnect = () => {
-    // Clear current state and redirect to auth
-    setIsAuthenticated(false);
-    setInstallationId(null);
-    setRepositories([]);
-    setSelectedRepos([]);
-    setError(null);
-    window.location.href = '/api/github/auth';
-  };
+  // Remove unused handler - keeping for potential future use
+  // const handleReconnect = () => {
+  //   // Clear current state and redirect to auth
+  //   setIsAuthenticated(false);
+  //   setInstallationId(null);
+  //   setRepositories([]);
+  //   setSelectedRepos([]);
+  //   setError(null);
+  //   window.location.href = '/api/github/auth';
+  // };
 
   const handleAddOrganizations = () => {
     // Redirect to installation flow (keeps existing state)
@@ -198,7 +199,7 @@ export default function Home() {
                 Install & Connect GitHub App
               </button>
               <p className="text-sm text-gray-500 dark:text-gray-400 mt-4">
-                You'll be able to select which repositories to grant access to during the installation process.
+                You&apos;ll be able to select which repositories to grant access to during the installation process.
               </p>
             </div>
           </div>
@@ -267,5 +268,13 @@ export default function Home() {
         />
       </div>
     </div>
+  );
+}
+
+export default function Home() {
+  return (
+    <Suspense fallback={<div>Loading...</div>}>
+      <HomeContent />
+    </Suspense>
   );
 }
