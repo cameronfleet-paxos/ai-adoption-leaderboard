@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, Suspense } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useSearchParams, useRouter, usePathname } from 'next/navigation';
 import { Leaderboard } from '@/components/Leaderboard';
 import { StatsCards } from '@/components/StatsCards';
 import { Header } from '@/components/Header';
@@ -11,6 +11,8 @@ import { Repository } from '@/lib/github';
 
 function HomeContent() {
   const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [installationId, setInstallationId] = useState<number | null>(null);
@@ -56,6 +58,25 @@ function HomeContent() {
   const [dateRange, setDateRange] = useState(getDefaultDateRange());
   const [selectedRepos, setSelectedRepos] = useState<string[]>([]);
 
+  // Update URL when selected repos change
+  const updateUrlWithRepos = useCallback((repos: string[]) => {
+    const params = new URLSearchParams(searchParams.toString());
+    
+    if (repos.length > 0) {
+      params.set('repos', encodeURIComponent(JSON.stringify(repos)));
+    } else {
+      params.delete('repos');
+    }
+    
+    const newUrl = params.toString() ? `${pathname}?${params.toString()}` : pathname;
+    router.replace(newUrl, { scroll: false });
+  }, [searchParams, pathname, router]);
+
+  const handleRepoChange = useCallback((newSelectedRepos: string[]) => {
+    setSelectedRepos(newSelectedRepos);
+    updateUrlWithRepos(newSelectedRepos);
+  }, [updateUrlWithRepos]);
+
   // Fetch session data on component mount
   useEffect(() => {
     const errorParam = searchParams.get('error');
@@ -74,7 +95,24 @@ function HomeContent() {
         if (sessionData.isAuthenticated) {
           setInstallationId(sessionData.installationId);
           setRepositories(sessionData.repositories);
-          setSelectedRepos(sessionData.repositories.map((repo: Repository) => repo.name));
+          
+          // Get selected repos from URL or default to empty
+          const reposFromUrl = searchParams.get('repos');
+          if (reposFromUrl) {
+            try {
+              const decodedRepos = JSON.parse(decodeURIComponent(reposFromUrl));
+              const validRepos = decodedRepos.filter((repoName: string) => 
+                sessionData.repositories.some((repo: Repository) => repo.name === repoName)
+              );
+              setSelectedRepos(validRepos);
+            } catch (error) {
+              console.error('Failed to parse repos from URL:', error);
+              setSelectedRepos([]);
+            }
+          } else {
+            setSelectedRepos([]);
+          }
+          
           setIsAuthenticated(true);
           setError(null);
         } else {
@@ -238,41 +276,14 @@ function HomeContent() {
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
       <div className="container mx-auto px-4 py-8">
-        <Header />
+        <Header 
+          repositoryCount={repositories.length}
+          onManageSettings={() => window.open('https://github.com/settings/installations', '_blank')}
+          onAddOrganizations={handleAddOrganizations}
+          onLogout={handleLogout}
+          isAuthenticated={isAuthenticated}
+        />
         
-        {/* Connected repositories info */}
-        <div className="mb-6 p-4 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg">
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="text-sm font-medium text-green-800 dark:text-green-200">
-                GitHub App installed on {repositories.length} repositories
-              </h3>
-              <p className="text-xs text-green-600 dark:text-green-300 mt-1">
-                {repositories.map(repo => repo.displayName).join(', ')}
-              </p>
-            </div>
-            <div className="flex gap-2">
-              <button
-                onClick={() => window.open('https://github.com/settings/installations', '_blank')}
-                className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded transition-colors"
-              >
-                Manage Settings
-              </button>
-              <button
-                onClick={handleAddOrganizations}
-                className="text-xs bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded transition-colors"
-              >
-                Add Organizations
-              </button>
-              <button
-                onClick={handleLogout}
-                className="text-xs bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded transition-colors"
-              >
-                Logout
-              </button>
-            </div>
-          </div>
-        </div>
         
         <DateRangeSelector
           startDate={dateRange.startDate}
@@ -284,7 +295,7 @@ function HomeContent() {
 
         <RepositorySelector
           selectedRepos={selectedRepos}
-          onRepoChange={setSelectedRepos}
+          onRepoChange={handleRepoChange}
           availableRepos={repositories}
         />
 
@@ -293,11 +304,13 @@ function HomeContent() {
           claudeCommits={data.claudeCommits}
           activeUsers={data.activeUsers}
           isLoading={isLoading}
+          hasSelectedRepos={selectedRepos.length > 0}
         />
 
         <Leaderboard 
           data={data.leaderboard}
           isLoading={isLoading}
+          hasSelectedRepos={selectedRepos.length > 0}
         />
       </div>
     </div>

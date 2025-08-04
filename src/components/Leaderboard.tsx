@@ -21,9 +21,10 @@ interface LeaderboardEntry {
 interface LeaderboardProps {
   data: LeaderboardEntry[];
   isLoading: boolean;
+  hasSelectedRepos?: boolean;
 }
 
-export function Leaderboard({ data, isLoading }: LeaderboardProps) {
+export function Leaderboard({ data, isLoading, hasSelectedRepos = true }: LeaderboardProps) {
   const [expandedUser, setExpandedUser] = useState<string | null>(null);
   
   const toggleUser = (username: string) => {
@@ -44,6 +45,27 @@ export function Leaderboard({ data, isLoading }: LeaderboardProps) {
               <div className="w-12 h-4 bg-gray-300 dark:bg-gray-600 rounded"></div>
             </div>
           ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (!hasSelectedRepos) {
+    return (
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm p-6">
+        <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-4">Leaderboard</h2>
+        <div className="text-center py-12">
+          <div className="text-gray-400 dark:text-gray-500 mb-4">
+            <svg className="mx-auto h-12 w-12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+            </svg>
+          </div>
+          <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">
+            Select repositories to view leaderboard
+          </h3>
+          <p className="text-sm text-gray-500 dark:text-gray-400">
+            Choose one or more repositories above to see commit statistics and developer rankings.
+          </p>
         </div>
       </div>
     );
