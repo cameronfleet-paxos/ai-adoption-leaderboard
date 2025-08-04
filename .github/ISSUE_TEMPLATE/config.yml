@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 💬 GitHub Discussions
+    url: https://github.com/cameronfleet-paxos/ai-adoption-leaderboard/discussions
+    about: Ask questions and discuss ideas with the community
+  - name: 🚀 Live Demo
+    url: https://ai-adoption-leaderboard.vercel.app/
+    about: Try out the application live
+  - name: 📖 Documentation
+    url: https://github.com/cameronfleet-paxos/ai-adoption-leaderboard/blob/main/DEPLOYMENT.md
+    about: Read the deployment and setup documentation
