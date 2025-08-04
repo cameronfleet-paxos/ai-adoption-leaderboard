@@ -2,7 +2,6 @@
 
 [![CI](https://github.com/cameronfleet-paxos/ai-adoption-leaderboard/actions/workflows/ci.yml/badge.svg)](https://github.com/cameronfleet-paxos/ai-adoption-leaderboard/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fcameronfleet-paxos%2Fai-adoption-leaderboard)
 
 > **Track and celebrate AI-enhanced development across your organization** 
 
@@ -25,18 +24,7 @@ A beautiful, modern web application that analyzes GitHub repositories to create 
 🌙 **Modern UI/UX** - Built with shadcn/ui components and responsive design  
 🔒 **Privacy-First** - Secure session management with no persistent data storage  
 
-## 🚀 Quick Start
-
-### Option 1: Deploy to Vercel (Recommended)
-
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fcameronfleet-paxos%2Fai-adoption-leaderboard)
-
-1. Click the deploy button above
-2. Follow the [deployment guide](./DEPLOYMENT.md) to configure your GitHub App
-3. Add environment variables in Vercel
-4. Redeploy and enjoy!
-
-### Option 2: Local Development
+## 🚀 Quick Start (Local Development)
 
 ```bash
 # Clone the repository
@@ -48,32 +36,26 @@ npm install
 
 # Copy environment template
 cp .env.local.example .env.local
-
-# Configure your GitHub App credentials in .env.local
-# See setup instructions below
-
-# Start development server
-npm run dev
 ```
 
-## 🛠️ Setup Instructions
-
-### 1. Create a GitHub App
+### 🛠️ Setup GitHub App
 
 1. Go to [GitHub Settings > Developer settings > GitHub Apps](https://github.com/settings/apps)
 2. Click "New GitHub App"
 3. Configure:
-   - **App name**: `AI Adoption Leaderboard` (or your preferred name)
-   - **Homepage URL**: Your deployment URL or `http://localhost:3000`
-   - **Callback URL**: `{YOUR_URL}/api/github/callback`
-   - **Setup URL**: `{YOUR_URL}/api/github/installation-callback`
+   - **App name**: `AI Adoption Leaderboard Dev` (or your preferred name)
+   - **Homepage URL**: `http://localhost:3000`
+   - **Callback URL**: `http://localhost:3000/api/github/callback`
+   - **Setup URL**: `http://localhost:3000/api/github/installation-callback`
    - **Repository permissions**: 
      - Contents: Read
      - Metadata: Read
      - Pull requests: Read
    - **User permissions**: Email addresses: Read (optional)
+4. Generate a private key and download it
+5. Note your App ID, Client ID, and Client Secret
 
-### 2. Configure Environment Variables
+### ⚙️ Configure Environment
 
 Update `.env.local` with your GitHub App credentials:
 
@@ -88,13 +70,34 @@ GITHUB_APP_PRIVATE_KEY="-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA...\n--
 SESSION_SECRET=your-secure-random-session-secret-32-chars-minimum
 ```
 
-### 3. Start the Application
+### 🏁 Start Development
 
 ```bash
 npm run dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000) and start analyzing your AI adoption!
+
+## 🌐 Deployment
+
+### Deploy to Vercel (Recommended)
+
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fcameronfleet-paxos%2Fai-adoption-leaderboard)
+
+1. Click the deploy button above
+2. Create a production GitHub App with your Vercel deployment URL
+3. Add environment variables in Vercel dashboard
+4. Redeploy to apply configuration
+
+### Other Deployment Options
+
+The application can be deployed to any Node.js hosting platform:
+
+- **Netlify**: Use `npm run build` and deploy the `.next` folder
+- **Railway**: Connect your GitHub repo and configure environment variables
+- **Self-hosted**: Use `npm run build && npm start` on your server
+
+For detailed deployment instructions, see the [📋 Deployment Guide](./DEPLOYMENT.md).
 
 ## 🏗️ How It Works
 
