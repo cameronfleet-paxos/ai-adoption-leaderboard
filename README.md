@@ -80,7 +80,7 @@ Open [http://localhost:3000](http://localhost:3000) and start analyzing your AI 
 
 ## 🌐 Deployment
 
-### Deploy to Vercel (Recommended)
+### Deploy to Vercel
 
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fcameronfleet-paxos%2Fai-adoption-leaderboard)
 
@@ -88,16 +88,6 @@ Open [http://localhost:3000](http://localhost:3000) and start analyzing your AI 
 2. Create a production GitHub App with your Vercel deployment URL
 3. Add environment variables in Vercel dashboard
 4. Redeploy to apply configuration
-
-### Other Deployment Options
-
-The application can be deployed to any Node.js hosting platform:
-
-- **Netlify**: Use `npm run build` and deploy the `.next` folder
-- **Railway**: Connect your GitHub repo and configure environment variables
-- **Self-hosted**: Use `npm run build && npm start` on your server
-
-For detailed deployment instructions, see the [📋 Deployment Guide](./DEPLOYMENT.md).
 
 ## 🏗️ How It Works
 
