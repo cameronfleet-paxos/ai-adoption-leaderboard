@@ -76,11 +76,13 @@ npm run dev
 
 ## Deployment
 
-For production deployment:
+See [DEPLOYMENT.md](./DEPLOYMENT.md) for detailed step-by-step deployment instructions.
 
-1. Update GitHub App settings with your production URLs
-2. Set environment variables in your hosting platform
-3. Deploy using your preferred platform (Vercel, Netlify, etc.)
+Quick deployment to Vercel:
+1. Deploy to Vercel from GitHub
+2. Create GitHub App with production URLs
+3. Configure environment variables in Vercel
+4. Redeploy
 
 ## Security
 

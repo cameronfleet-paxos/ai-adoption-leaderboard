@@ -39,12 +39,7 @@ export class GitHubAppAuth {
       this.clientId = process.env.GITHUB_APP_CLIENT_ID!;
       this.clientSecret = process.env.GITHUB_APP_CLIENT_SECRET!;
 
-      console.log('Environment variables loaded:', {
-        appId: this.appId ? 'SET' : 'MISSING',
-        privateKey: this.privateKey ? 'SET' : 'MISSING',
-        clientId: this.clientId ? 'SET' : 'MISSING',  
-        clientSecret: this.clientSecret ? 'SET' : 'MISSING'
-      });
+      // Environment variables loaded successfully
 
       if (!this.appId || !this.privateKey || !this.clientId || !this.clientSecret) {
         throw new Error('Missing required GitHub App environment variables');
@@ -170,7 +165,7 @@ export class GitHubAppAuth {
 
     const installationsData = await installationsResponse.json();
     
-    console.log('Found installations:', installationsData.installations?.length || 0);
+    // Process user installations
     
     if (!installationsData.installations || installationsData.installations.length === 0) {
       throw new Error('No installations found. Please install the GitHub App first by visiting: https://github.com/apps/ai-adoption-leaderboard/installations/new');
