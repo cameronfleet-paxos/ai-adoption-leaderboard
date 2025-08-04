@@ -37,11 +37,16 @@ function HomeContent() {
     }>
   });
   
-  // Initialize date range to past week
+  // Initialize date range to past week (inclusive of today)
   const getDefaultDateRange = () => {
     const end = new Date();
     const start = new Date();
-    start.setDate(start.getDate() - 7);
+    
+    // Set end to tomorrow to include all of today
+    end.setDate(end.getDate() + 1);
+    // Set start to 6 days ago (7 days total including today)
+    start.setDate(start.getDate() - 6);
+    
     return {
       startDate: start.toISOString().split('T')[0],
       endDate: end.toISOString().split('T')[0]

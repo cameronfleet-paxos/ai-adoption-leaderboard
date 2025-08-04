@@ -16,18 +16,24 @@ export function DateRangeSelector({ startDate, endDate, onDateChange, onRefresh,
     const end = new Date();
     const start = new Date();
     
+    // Set end date to tomorrow to include all of today
+    end.setDate(end.getDate() + 1);
+    
     switch (preset) {
       case 'week':
-        start.setDate(start.getDate() - 7);
+        start.setDate(start.getDate() - 6); // 7 days including today
         break;
       case 'month':
         start.setMonth(start.getMonth() - 1);
+        start.setDate(start.getDate() + 1); // Adjust to include today
         break;
       case 'quarter':
         start.setMonth(start.getMonth() - 3);
+        start.setDate(start.getDate() + 1); // Adjust to include today
         break;
       case 'year':
         start.setFullYear(start.getFullYear() - 1);
+        start.setDate(start.getDate() + 1); // Adjust to include today
         break;
     }
     
