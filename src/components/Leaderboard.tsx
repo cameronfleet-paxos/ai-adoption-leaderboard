@@ -1,4 +1,11 @@
 import { useState } from 'react';
+import { ChevronDown, ChevronRight, ExternalLink, Trophy, Medal, Award, Zap, Calendar, GitCommit } from 'lucide-react';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { cn } from '@/lib/utils';
 
 interface CommitDetail {
   sha: string;
@@ -29,6 +36,32 @@ export function Leaderboard({ data, isLoading, hasSelectedRepos = true }: Leader
   
   const toggleUser = (username: string) => {
     setExpandedUser(expandedUser === username ? null : username);
+  };
+
+  const getRankIcon = (rank: number) => {
+    switch (rank) {
+      case 1:
+        return <Trophy className="h-5 w-5 text-yellow-500" />;
+      case 2:
+        return <Medal className="h-5 w-5 text-gray-400" />;
+      case 3:
+        return <Award className="h-5 w-5 text-amber-600" />;
+      default:
+        return <span className="text-sm font-bold text-muted-foreground">#{rank}</span>;
+    }
+  };
+
+  const getRankBadgeVariant = (rank: number) => {
+    switch (rank) {
+      case 1:
+        return "default";
+      case 2:
+        return "secondary";
+      case 3:
+        return "outline";
+      default:
+        return "outline";
+    }
   };
   if (isLoading) {
     return (
@@ -71,98 +104,151 @@ export function Leaderboard({ data, isLoading, hasSelectedRepos = true }: Leader
     );
   }
 
+  if (data.length === 0) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Trophy className="h-5 w-5" />
+            AI Adoption Leaderboard
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="text-center py-8">
+            <GitCommit className="mx-auto h-12 w-12 text-muted-foreground/40 mb-4" />
+            <h3 className="text-lg font-medium mb-2">No commits found</h3>
+            <p className="text-sm text-muted-foreground">
+              No commits were found in the selected repositories and time range.
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm p-6">
-      <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-4">Leaderboard</h2>
-      <div className="space-y-4">
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Trophy className="h-5 w-5" />
+          AI Adoption Leaderboard
+          <Badge variant="secondary" className="ml-auto">
+            {data.length} {data.length === 1 ? 'developer' : 'developers'}
+          </Badge>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
         {data.map((entry) => (
-          <div key={entry.username} className="border border-gray-200 dark:border-gray-700 rounded-lg">
-            <div 
-              className="flex items-center space-x-4 p-4 hover:bg-gray-50 dark:hover:bg-gray-700 rounded-lg transition-colors cursor-pointer"
-              onClick={() => toggleUser(entry.username)}
-            >
-              <div className="flex-shrink-0">
-                <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white font-bold ${
-                  entry.rank === 1 ? 'bg-yellow-500' : 
-                  entry.rank === 2 ? 'bg-gray-400' : 
-                  entry.rank === 3 ? 'bg-amber-600' : 
-                  'bg-blue-500'
-                }`}>
-                  {entry.rank}
-                </div>
-              </div>
-              <div className="flex-1">
-                <div className="flex items-center space-x-2">
-                  <span className="font-medium text-gray-900 dark:text-white">{entry.username}</span>
-                  {entry.rank <= 3 && (
-                    <span className="text-xs bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 px-2 py-1 rounded-full">
-                      Top {entry.rank}
-                    </span>
-                  )}
-                </div>
-                <div className="text-sm text-gray-500 dark:text-gray-400">
-                  {entry.commits} of {entry.totalCommits} commits with Claude ({entry.claudePercentage}%)
-                </div>
-              </div>
-              <div className="flex items-center space-x-3">
-                <div className="text-right">
-                  <div className="text-lg font-bold text-gray-900 dark:text-white">{entry.commits}</div>
-                  <div className="text-xs text-gray-500 dark:text-gray-400">{entry.claudePercentage}%</div>
-                </div>
-                <svg 
-                  className={`w-4 h-4 text-gray-400 transition-transform ${
-                    expandedUser === entry.username ? 'rotate-180' : ''
-                  }`}
-                  fill="none" 
-                  stroke="currentColor" 
-                  viewBox="0 0 24 24"
+          <Collapsible key={entry.username}>
+            <div className={cn(
+              "rounded-lg border transition-all duration-200 hover:shadow-md",
+              entry.rank <= 3 ? "bg-gradient-to-r from-primary/5 to-transparent" : ""
+            )}>
+              <CollapsibleTrigger asChild>
+                <Button
+                  variant="ghost"
+                  className="w-full p-4 h-auto justify-start hover:bg-transparent"
+                  onClick={() => toggleUser(entry.username)}
                 >
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                </svg>
-              </div>
-            </div>
-            
-            {expandedUser === entry.username && (
-              <div className="px-4 pb-4 border-t border-gray-200 dark:border-gray-700">
-                <div className="mt-4 space-y-3">
-                  <h4 className="font-medium text-gray-900 dark:text-white">Recent Commits</h4>
-                  {entry.commitDetails.length > 0 ? (
-                    entry.commitDetails.map((commit) => (
-                      <div 
-                        key={commit.sha} 
-                        className="p-3 bg-gray-50 dark:bg-gray-800 rounded-lg cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-                        onClick={() => window.open(commit.url, '_blank')}
-                      >
-                        <div className="flex items-start justify-between">
-                          <div className="flex-1">
-                            <p className="text-sm font-medium text-gray-900 dark:text-white mb-1">
-                              {commit.message}
-                            </p>
-                            <div className="flex items-center space-x-2 text-xs text-gray-500 dark:text-gray-400">
-                              <span>{commit.sha.substring(0, 7)}</span>
-                              <span>•</span>
-                              <span>{new Date(commit.date).toLocaleDateString()}</span>
-                              <span>•</span>
-                              <span className="px-2 py-1 bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 rounded-full text-xs">
-                                {commit.repository}
-                              </span>
-                            </div>
-                          </div>
-                          <svg className="w-4 h-4 text-gray-400 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                          </svg>
+                  <div className="flex items-center justify-between w-full">
+                    <div className="flex items-center space-x-4">
+                      <div className="flex items-center justify-center w-10 h-10">
+                        {getRankIcon(entry.rank)}
+                      </div>
+                      <Avatar className="h-10 w-10">
+                        <AvatarImage src={entry.avatar} alt={entry.username} />
+                        <AvatarFallback>
+                          {entry.username.slice(0, 2).toUpperCase()}
+                        </AvatarFallback>
+                      </Avatar>
+                      <div className="text-left">
+                        <div className="flex items-center gap-2">
+                          <h3 className="font-semibold">{entry.username}</h3>
+                          {entry.rank <= 3 && (
+                            <Badge variant={getRankBadgeVariant(entry.rank)} className="text-xs">
+                              {entry.rank === 1 ? '🥇 Champion' : entry.rank === 2 ? '🥈 Expert' : '🥉 Pioneer'}
+                            </Badge>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-4 text-sm text-muted-foreground">
+                          <span className="flex items-center gap-1">
+                            <Zap className="h-3 w-3" />
+                            {entry.commits} AI commits
+                          </span>
+                          <span className="flex items-center gap-1">
+                            <GitCommit className="h-3 w-3" />
+                            {entry.totalCommits} total
+                          </span>
                         </div>
                       </div>
-                    ))
-                  ) : (
-                    <p className="text-sm text-gray-500 dark:text-gray-400">No commit details available</p>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
+                    </div>
+                    <div className="flex items-center space-x-3">
+                      <div className="text-right">
+                        <div className="text-2xl font-bold text-primary">
+                          {entry.claudePercentage}%
+                        </div>
+                        <div className="text-xs text-muted-foreground">adoption rate</div>
+                      </div>
+                      {expandedUser === entry.username ? (
+                        <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                      ) : (
+                        <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                      )}
+                    </div>
+                  </div>
+                </Button>
+              </CollapsibleTrigger>
+              
+              <CollapsibleContent>
+                {expandedUser === entry.username && (
+                  <div className="px-4 pb-4 border-t">
+                    <div className="pt-4">
+                      <h4 className="font-medium mb-3 flex items-center gap-2">
+                        <Zap className="h-4 w-4" />
+                        Recent AI-Enhanced Commits
+                      </h4>
+                      <div className="space-y-3 max-h-80 overflow-y-auto">
+                        {entry.commitDetails.length > 0 ? (
+                          entry.commitDetails.map((commit) => (
+                            <div key={commit.sha} className="group flex items-start space-x-3 p-3 rounded-lg border bg-muted/30 hover:bg-muted/50 transition-colors">
+                              <div className="w-2 h-2 bg-primary rounded-full mt-2 flex-shrink-0"></div>
+                              <div className="flex-1 min-w-0">
+                                <p className="font-medium text-sm leading-relaxed mb-2">
+                                  {commit.message}
+                                </p>
+                                <div className="flex items-center space-x-3 text-xs text-muted-foreground">
+                                  <Badge variant="outline" className="text-xs">
+                                    {commit.repository}
+                                  </Badge>
+                                  <span className="flex items-center gap-1">
+                                    <Calendar className="h-3 w-3" />
+                                    {new Date(commit.date).toLocaleDateString()}
+                                  </span>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-auto p-0 text-xs text-primary hover:text-primary/80 opacity-0 group-hover:opacity-100 transition-opacity"
+                                    onClick={() => window.open(commit.url, '_blank')}
+                                  >
+                                    <ExternalLink className="h-3 w-3 mr-1" />
+                                    View commit
+                                  </Button>
+                                </div>
+                              </div>
+                            </div>
+                          ))
+                        ) : (
+                          <p className="text-sm text-muted-foreground">No commit details available</p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </CollapsibleContent>
+            </div>
+          </Collapsible>
         ))}
-      </div>
-    </div>
+      </CardContent>
+    </Card>
   );
 }

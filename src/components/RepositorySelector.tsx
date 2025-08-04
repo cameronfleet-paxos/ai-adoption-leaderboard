@@ -1,5 +1,12 @@
 import { Repository } from '@/lib/github';
 import { useState, useMemo } from 'react';
+import { Search, X, Check, GitBranch } from 'lucide-react';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Checkbox } from '@/components/ui/checkbox';
+import { cn } from '@/lib/utils';
 
 interface RepositorySelectorProps {
   selectedRepos: string[];
@@ -48,84 +55,121 @@ export function RepositorySelector({ selectedRepos, onRepoChange, availableRepos
   };
 
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm p-6 mb-6">
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-          Select Repositories ({selectedRepos.length} selected)
-        </h3>
-        <div className="flex gap-2">
-          {selectedRepos.length > 0 && (
-            <button
-              onClick={handleClearAll}
-              className="text-sm text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 font-medium"
-            >
-              Clear All
-            </button>
-          )}
-          <button
-            onClick={handleSelectAll}
-            className="text-sm text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 font-medium"
-          >
-            {filteredRepos.every(repo => selectedRepos.includes(repo.name)) ? 'Deselect Visible' : 'Select Visible'}
-          </button>
-        </div>
-      </div>
-      
-      {/* Search input */}
-      <div className="mb-4">
-        <div className="relative">
-          <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-            <svg className="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-            </svg>
+    <Card className="mb-8">
+      <CardHeader className="pb-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <CardTitle className="text-xl">Repository Selection</CardTitle>
+            {selectedRepos.length > 0 && (
+              <Badge variant="secondary" className="text-xs">
+                {selectedRepos.length} selected
+              </Badge>
+            )}
           </div>
-          <input
-            type="text"
+          <div className="flex items-center gap-2">
+            {selectedRepos.length > 0 && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleClearAll}
+                className="text-destructive hover:text-destructive"
+              >
+                <X className="h-4 w-4 mr-1" />
+                Clear All
+              </Button>
+            )}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleSelectAll}
+            >
+              <Check className="h-4 w-4 mr-1" />
+              {filteredRepos.every(repo => selectedRepos.includes(repo.name)) ? 'Deselect Visible' : 'Select Visible'}
+            </Button>
+          </div>
+        </div>
+      </CardHeader>
+      
+      <CardContent className="space-y-4">
+        {/* Search input */}
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
             placeholder="Search repositories..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg leading-5 bg-white dark:bg-gray-700 dark:border-gray-600 placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:placeholder-gray-400 focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-sm"
+            className="pl-9"
           />
+          {searchQuery && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="absolute right-1 top-1/2 h-7 w-7 -translate-y-1/2 p-0"
+              onClick={() => setSearchQuery('')}
+            >
+              <X className="h-3 w-3" />
+            </Button>
+          )}
         </div>
-      </div>
-      
-      <div className="space-y-3 max-h-96 overflow-y-auto">
-        {filteredRepos.length === 0 ? (
-          <div className="text-center py-8 text-gray-500 dark:text-gray-400">
-            <p>No repositories found matching &quot;{searchQuery}&quot;</p>
-          </div>
-        ) : (
-          filteredRepos.map((repo) => (
-          <label
-            key={repo.name}
-            className="flex items-center space-x-3 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700 rounded-lg p-2 transition-colors"
-          >
-            <input
-              type="checkbox"
-              checked={selectedRepos.includes(repo.name)}
-              onChange={() => handleRepoToggle(repo.name)}
-              className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
-            />
-            <div className="flex-1">
-              <div className="font-medium text-gray-900 dark:text-white">
-                {repo.displayName}
-              </div>
-              <div className="text-sm text-gray-500 dark:text-gray-400 font-mono">
-                {repo.owner}/{repo.name}
-              </div>
+        
+        {/* Repository list */}
+        <div className="max-h-96 overflow-y-auto space-y-2">
+          {filteredRepos.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-12 text-center">
+              <GitBranch className="h-12 w-12 text-muted-foreground/40 mb-4" />
+              <h3 className="font-medium text-lg mb-2">No repositories found</h3>
+              <p className="text-sm text-muted-foreground max-w-sm">
+                {searchQuery ? (
+                  <>No repositories match &quot;{searchQuery}&quot;. Try a different search term.</>
+                ) : (
+                  'No repositories available. Please install the GitHub App on your repositories.'
+                )}
+              </p>
             </div>
-          </label>
-          ))
-        )}
-      </div>
-      
-      {selectedRepos.length === 0 && (
-        <div className="mt-4 p-3 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg">
-          <p className="text-sm text-yellow-800 dark:text-yellow-200">
-            Please select at least one repository to view data.
-          </p>
+          ) : (
+            filteredRepos.map((repo) => {
+              const isSelected = selectedRepos.includes(repo.name);
+              return (
+                <div
+                  key={repo.name}
+                  className={cn(
+                    "flex items-center space-x-3 rounded-lg border p-4 transition-colors cursor-pointer",
+                    isSelected 
+                      ? "bg-primary/5 border-primary/20 hover:bg-primary/10" 
+                      : "hover:bg-muted/50"
+                  )}
+                  onClick={() => handleRepoToggle(repo.name)}
+                >
+                  <Checkbox
+                    checked={isSelected}
+                    onCheckedChange={() => handleRepoToggle(repo.name)}
+                  />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <GitBranch className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                      <span className="font-medium truncate">{repo.displayName}</span>
+                    </div>
+                    <p className="text-sm text-muted-foreground font-mono mt-1">
+                      {repo.owner}/{repo.name}
+                    </p>
+                  </div>
+                </div>
+              );
+            })
+          )}
         </div>
-      )}
-    </div>
+        
+        {selectedRepos.length === 0 && filteredRepos.length > 0 && (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 dark:border-amber-900/50 dark:bg-amber-900/10">
+            <div className="flex items-center gap-2">
+              <div className="h-4 w-4 rounded-full bg-amber-500 flex-shrink-0" />
+              <p className="text-sm font-medium text-amber-800 dark:text-amber-200">
+                Select repositories to view commit data and leaderboard
+              </p>
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }

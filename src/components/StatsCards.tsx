@@ -1,3 +1,7 @@
+import { TrendingUp, GitCommit, Users, Zap } from 'lucide-react';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { cn } from '@/lib/utils';
+
 interface StatsCardsProps {
   totalCommits: number;
   claudeCommits: number;
@@ -9,14 +13,55 @@ interface StatsCardsProps {
 export function StatsCards({ totalCommits, claudeCommits, activeUsers, isLoading = false, hasSelectedRepos = true }: StatsCardsProps) {
   const adoptionRate = totalCommits > 0 ? Math.round((claudeCommits / totalCommits) * 100) : 0;
 
+  const stats = [
+    {
+      title: 'Total Commits',
+      value: totalCommits,
+      icon: GitCommit,
+      description: 'All commits in selected repositories',
+      color: 'text-blue-600 dark:text-blue-400',
+      bgColor: 'bg-blue-50 dark:bg-blue-900/10',
+    },
+    {
+      title: 'Claude Co-authored',
+      value: claudeCommits,
+      icon: Zap,
+      description: 'Commits enhanced with AI assistance',
+      color: 'text-purple-600 dark:text-purple-400',
+      bgColor: 'bg-purple-50 dark:bg-purple-900/10',
+    },
+    {
+      title: 'Active Developers',
+      value: activeUsers,
+      icon: Users,
+      description: 'Contributors in the selected timeframe',
+      color: 'text-green-600 dark:text-green-400',
+      bgColor: 'bg-green-50 dark:bg-green-900/10',
+    },
+    {
+      title: 'AI Adoption Rate',
+      value: `${adoptionRate}%`,
+      icon: TrendingUp,
+      description: 'Percentage of commits using AI assistance',
+      color: 'text-orange-600 dark:text-orange-400',
+      bgColor: 'bg-orange-50 dark:bg-orange-900/10',
+    },
+  ];
+
   if (isLoading) {
     return (
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-        {[...Array(4)].map((_, i) => (
-          <div key={i} className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-sm animate-pulse">
-            <div className="h-4 bg-gray-300 dark:bg-gray-600 rounded w-3/4 mb-2"></div>
-            <div className="h-8 bg-gray-300 dark:bg-gray-600 rounded w-1/2"></div>
-          </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+        {stats.map((_, i) => (
+          <Card key={i} className="animate-pulse">
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <div className="h-4 bg-muted rounded w-20"></div>
+              <div className="h-4 w-4 bg-muted rounded"></div>
+            </CardHeader>
+            <CardContent>
+              <div className="h-8 bg-muted rounded w-16 mb-2"></div>
+              <div className="h-3 bg-muted rounded w-32"></div>
+            </CardContent>
+          </Card>
         ))}
       </div>
     );
@@ -24,37 +69,55 @@ export function StatsCards({ totalCommits, claudeCommits, activeUsers, isLoading
 
   if (!hasSelectedRepos) {
     return (
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-        {[...Array(4)].map((_, i) => (
-          <div key={i} className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-sm opacity-50">
-            <h3 className="text-sm font-medium text-gray-500 dark:text-gray-400">
-              {['Total Commits', 'Claude Co-authored', 'Active Users', 'Adoption Rate'][i]}
-            </h3>
-            <p className="text-2xl font-bold text-gray-400 dark:text-gray-500">-</p>
-          </div>
-        ))}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+        {stats.map((stat, i) => {
+          const IconComponent = stat.icon;
+          return (
+            <Card key={i} className="opacity-60">
+              <CardHeader className="flex flex-row items-center justify-between pb-2">
+                <CardTitle className="text-sm font-medium text-muted-foreground">
+                  {stat.title}
+                </CardTitle>
+                <div className={cn('p-2 rounded-lg', stat.bgColor)}>
+                  <IconComponent className={cn('h-4 w-4', stat.color)} />
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold text-muted-foreground">—</div>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Select repositories to view data
+                </p>
+              </CardContent>
+            </Card>
+          );
+        })}
       </div>
     );
   }
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-      <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-sm">
-        <h3 className="text-sm font-medium text-gray-500 dark:text-gray-400">Total Commits</h3>
-        <p className="text-2xl font-bold text-gray-900 dark:text-white">{totalCommits}</p>
-      </div>
-      <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-sm">
-        <h3 className="text-sm font-medium text-gray-500 dark:text-gray-400">Claude Co-authored</h3>
-        <p className="text-2xl font-bold text-blue-600 dark:text-blue-400">{claudeCommits}</p>
-      </div>
-      <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-sm">
-        <h3 className="text-sm font-medium text-gray-500 dark:text-gray-400">Active Users</h3>
-        <p className="text-2xl font-bold text-green-600 dark:text-green-400">{activeUsers}</p>
-      </div>
-      <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-sm">
-        <h3 className="text-sm font-medium text-gray-500 dark:text-gray-400">Adoption Rate</h3>
-        <p className="text-2xl font-bold text-purple-600 dark:text-purple-400">{adoptionRate}%</p>
-      </div>
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+      {stats.map((stat, i) => {
+        const IconComponent = stat.icon;
+        return (
+          <Card key={i} className="hover:shadow-lg transition-shadow">
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <CardTitle className="text-sm font-medium">
+                {stat.title}
+              </CardTitle>
+              <div className={cn('p-2 rounded-lg', stat.bgColor)}>
+                <IconComponent className={cn('h-4 w-4', stat.color)} />
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">{stat.value.toLocaleString()}</div>
+              <p className="text-xs text-muted-foreground mt-1">
+                {stat.description}
+              </p>
+            </CardContent>
+          </Card>
+        );
+      })}
     </div>
   );
 }
