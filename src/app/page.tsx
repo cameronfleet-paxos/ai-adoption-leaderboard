@@ -45,6 +45,7 @@ function HomeContent() {
   // Repository state
   const [repositories, setRepositories] = useState<Repository[]>([]);
   const [selectedRepos, setSelectedRepos] = useState<string[]>([]);
+  const [deniedOrgs, setDeniedOrgs] = useState<string[]>([]);
 
   const emptyToolBreakdown = useMemo<AIToolBreakdown>(() => ({
     'claude-coauthor': 0,
@@ -154,8 +155,9 @@ function HomeContent() {
 
             // Fetch repositories
             try {
-              const repos = await fetchUserReposClient(session.accessToken);
+              const { repos, deniedOrgs: denied } = await fetchUserReposClient(session.accessToken);
               setRepositories(repos);
+              setDeniedOrgs(denied);
 
               // Restore selected repos from URL
               const reposFromUrl = searchParams.get('repos');
@@ -197,8 +199,9 @@ function HomeContent() {
 
           // Fetch repositories
           try {
-            const repos = await fetchUserReposClient(savedToken);
+            const { repos, deniedOrgs: denied } = await fetchUserReposClient(savedToken);
             setRepositories(repos);
+            setDeniedOrgs(denied);
 
             // Restore selected repos from URL
             const reposFromUrl = searchParams.get('repos');
@@ -245,8 +248,9 @@ function HomeContent() {
       setIsAuthenticated(true);
 
       // Fetch repositories
-      const repos = await fetchUserReposClient(newToken);
+      const { repos, deniedOrgs: denied } = await fetchUserReposClient(newToken);
       setRepositories(repos);
+      setDeniedOrgs(denied);
     } catch (err) {
       console.error('Failed to complete authentication:', err);
       setError('Failed to load user data');
@@ -415,6 +419,7 @@ function HomeContent() {
           selectedRepos={selectedRepos}
           onRepoChange={handleRepoChange}
           availableRepos={repositories}
+          deniedOrgs={deniedOrgs}
         />
 
         {error && (

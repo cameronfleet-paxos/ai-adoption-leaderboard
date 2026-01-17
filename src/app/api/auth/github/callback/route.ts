@@ -33,12 +33,20 @@ export async function GET(request: NextRequest) {
   }
 
   // Validate state to prevent CSRF attacks
-  // The state should be stored in a cookie and validated here
+  // The state is base64url encoded JSON with csrf token and preferences
   const storedState = request.cookies.get('oauth_state')?.value;
   if (!storedState || storedState !== state) {
     return NextResponse.redirect(
       new URL('/?error=Invalid%20state%20parameter', request.url)
     );
+  }
+
+  // Decode state to get preferences (for future use if needed)
+  let stateData: { csrf: string; private?: boolean } | null = null;
+  try {
+    stateData = JSON.parse(Buffer.from(state, 'base64url').toString());
+  } catch {
+    // Legacy state format (plain UUID) - continue without preferences
   }
 
   const clientId = process.env.NEXT_PUBLIC_GITHUB_CLIENT_ID;

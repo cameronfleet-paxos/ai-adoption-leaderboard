@@ -388,13 +388,122 @@ export async function fetchCommitDataClient(
 }
 
 /**
- * Fetch user's repositories from GitHub API
+ * Fetch user's organizations from GitHub API
  */
-export async function fetchUserReposClient(token: string): Promise<Repository[]> {
+async function fetchUserOrgs(token: string): Promise<string[]> {
+  const orgs: string[] = [];
+  let page = 1;
+  const perPage = 100;
+
+  while (true) {
+    const response = await fetch(
+      `https://api.github.com/user/orgs?per_page=${perPage}&page=${page}`,
+      {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Accept': 'application/vnd.github.v3+json',
+        },
+      }
+    );
+
+    if (!response.ok) {
+      // If we can't fetch orgs (e.g., missing scope), just return empty
+      console.warn('Could not fetch organizations:', response.status);
+      break;
+    }
+
+    const pageOrgs = await response.json();
+
+    if (pageOrgs.length === 0) {
+      break;
+    }
+
+    orgs.push(...pageOrgs.map((org: { login: string }) => org.login));
+
+    if (pageOrgs.length < perPage) {
+      break;
+    }
+
+    page++;
+
+    // Safety limit
+    if (page > 10) {
+      break;
+    }
+  }
+
+  return orgs;
+}
+
+/**
+ * Fetch repositories for a specific organization
+ * Returns repos array and a boolean indicating if access was denied
+ */
+async function fetchOrgRepos(token: string, org: string): Promise<{ repos: Repository[]; accessDenied: boolean }> {
   const repos: Repository[] = [];
   let page = 1;
   const perPage = 100;
 
+  while (true) {
+    const response = await fetch(
+      `https://api.github.com/orgs/${org}/repos?per_page=${perPage}&page=${page}&sort=pushed&direction=desc`,
+      {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Accept': 'application/vnd.github.v3+json',
+        },
+      }
+    );
+
+    if (!response.ok) {
+      // Org may not have granted access to the OAuth app
+      console.warn(`Could not fetch repos for org ${org}:`, response.status);
+      return { repos: [], accessDenied: true };
+    }
+
+    const pageRepos = await response.json();
+
+    if (pageRepos.length === 0) {
+      break;
+    }
+
+    repos.push(...pageRepos.map((repo: { owner: { login: string }; name: string; full_name: string }) => ({
+      owner: repo.owner.login,
+      name: repo.name,
+      displayName: repo.full_name,
+    })));
+
+    if (pageRepos.length < perPage) {
+      break;
+    }
+
+    page++;
+
+    // Safety limit - 500 repos per org max
+    if (page > 5) {
+      break;
+    }
+  }
+
+  return { repos, accessDenied: false };
+}
+
+export interface FetchReposResult {
+  repos: Repository[];
+  deniedOrgs: string[];
+}
+
+/**
+ * Fetch user's repositories from GitHub API (including org repos)
+ * Also returns list of organizations that denied access
+ */
+export async function fetchUserReposClient(token: string): Promise<FetchReposResult> {
+  const repos: Repository[] = [];
+  const deniedOrgs: string[] = [];
+  let page = 1;
+  const perPage = 100;
+
+  // First, fetch user's own repos
   while (true) {
     const response = await fetch(
       `https://api.github.com/user/repos?per_page=${perPage}&page=${page}&sort=pushed&direction=desc`,
@@ -434,7 +543,31 @@ export async function fetchUserReposClient(token: string): Promise<Repository[]>
     }
   }
 
-  return repos;
+  // Fetch user's organizations
+  const orgs = await fetchUserOrgs(token);
+
+  // Fetch repos from each organization
+  for (const org of orgs) {
+    const result = await fetchOrgRepos(token, org);
+    if (result.accessDenied) {
+      deniedOrgs.push(org);
+    } else {
+      repos.push(...result.repos);
+    }
+  }
+
+  // Deduplicate repos by full name (user/repos may overlap with org repos)
+  const seen = new Set<string>();
+  const uniqueRepos = repos.filter(repo => {
+    const key = repo.displayName;
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+
+  return { repos: uniqueRepos, deniedOrgs };
 }
 
 /**

@@ -98,19 +98,33 @@ export function TokenAuth({ onAuthenticated }: TokenAuthProps) {
             <p className="text-xs text-muted-foreground">
               Your token is stored locally in your browser and never sent to any server.
             </p>
-            <a
-              href="https://github.com/settings/tokens/new?scopes=repo,read:user&description=AI%20Adoption%20Leaderboard"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
-            >
-              Create a new token
-              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-              </svg>
-            </a>
+            <div className="space-y-1">
+              <a
+                href="https://github.com/settings/tokens/new?scopes=public_repo,read:org&description=AI%20Adoption%20Leaderboard%20(public%20repos)"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
+              >
+                Create token (public repos only)
+                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                </svg>
+              </a>
+              <span className="text-xs text-muted-foreground block">or</span>
+              <a
+                href="https://github.com/settings/tokens/new?scopes=repo,read:org&description=AI%20Adoption%20Leaderboard%20(all%20repos)"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground hover:underline"
+              >
+                Create token (include private repos)
+                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                </svg>
+              </a>
+            </div>
             <p className="text-xs text-muted-foreground">
-              Required scopes: <code className="bg-muted px-1 rounded">repo</code> and <code className="bg-muted px-1 rounded">read:user</code>
+              Minimum scopes: <code className="bg-muted px-1 rounded">public_repo</code> and <code className="bg-muted px-1 rounded">read:org</code>
             </p>
           </div>
         </form>

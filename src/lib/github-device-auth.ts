@@ -56,9 +56,16 @@ export function getClientId(): string {
 
 /**
  * Request a device code from GitHub
+ * @param includePrivate - If true, request full repo scope for private repos
  */
-export async function requestDeviceCode(): Promise<DeviceCodeResponse> {
+export async function requestDeviceCode(includePrivate: boolean = false): Promise<DeviceCodeResponse> {
   const clientId = getClientId();
+
+  // Minimal scopes: public_repo for public repos only, or repo for private
+  // read:org allows listing org memberships (needed for org repos)
+  const scope = includePrivate
+    ? 'repo read:org'  // Full repo access needed for private repos
+    : 'public_repo read:org';  // Public repos only (read-only)
 
   const response = await fetch(GITHUB_DEVICE_CODE_URL, {
     method: 'POST',
@@ -68,7 +75,7 @@ export async function requestDeviceCode(): Promise<DeviceCodeResponse> {
     },
     body: JSON.stringify({
       client_id: clientId,
-      scope: 'repo read:user',
+      scope,
     }),
   });
 
@@ -170,26 +177,134 @@ export async function fetchUser(token: string): Promise<GitHubUser> {
 }
 
 /**
- * Fetch user's repositories
+ * Fetch user's organizations
  */
-export async function fetchUserRepos(token: string): Promise<Array<{
+async function fetchUserOrgsDevice(token: string): Promise<string[]> {
+  const orgs: string[] = [];
+  let page = 1;
+  const perPage = 100;
+
+  while (true) {
+    const response = await fetch(
+      `${GITHUB_API_URL}/user/orgs?per_page=${perPage}&page=${page}`,
+      {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Accept': 'application/vnd.github.v3+json',
+        },
+      }
+    );
+
+    if (!response.ok) {
+      // If we can't fetch orgs (e.g., missing scope), just return empty
+      console.warn('Could not fetch organizations:', response.status);
+      break;
+    }
+
+    const pageOrgs = await response.json();
+
+    if (pageOrgs.length === 0) {
+      break;
+    }
+
+    orgs.push(...pageOrgs.map((org: { login: string }) => org.login));
+
+    if (pageOrgs.length < perPage) {
+      break;
+    }
+
+    page++;
+
+    // Safety limit
+    if (page > 10) {
+      break;
+    }
+  }
+
+  return orgs;
+}
+
+type DeviceRepo = {
   owner: string;
   name: string;
   displayName: string;
   fullName: string;
   private: boolean;
-}>> {
-  const repos: Array<{
-    owner: string;
-    name: string;
-    displayName: string;
-    fullName: string;
-    private: boolean;
-  }> = [];
+};
+
+/**
+ * Fetch repositories for a specific organization
+ * Returns repos array and a boolean indicating if access was denied
+ */
+async function fetchOrgReposDevice(token: string, org: string): Promise<{ repos: DeviceRepo[]; accessDenied: boolean }> {
+  const repos: DeviceRepo[] = [];
 
   let page = 1;
   const perPage = 100;
 
+  while (true) {
+    const response = await fetch(
+      `${GITHUB_API_URL}/orgs/${org}/repos?per_page=${perPage}&page=${page}&sort=pushed&direction=desc`,
+      {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Accept': 'application/vnd.github.v3+json',
+        },
+      }
+    );
+
+    if (!response.ok) {
+      // Org may not have granted access to the OAuth app
+      console.warn(`Could not fetch repos for org ${org}:`, response.status);
+      return { repos: [], accessDenied: true };
+    }
+
+    const pageRepos = await response.json();
+
+    if (pageRepos.length === 0) {
+      break;
+    }
+
+    repos.push(...pageRepos.map((repo: { owner: { login: string }; name: string; full_name: string; private: boolean }) => ({
+      owner: repo.owner.login,
+      name: repo.name,
+      displayName: repo.full_name,
+      fullName: repo.full_name,
+      private: repo.private,
+    })));
+
+    if (pageRepos.length < perPage) {
+      break;
+    }
+
+    page++;
+
+    // Safety limit - 500 repos per org max
+    if (page > 5) {
+      break;
+    }
+  }
+
+  return { repos, accessDenied: false };
+}
+
+export interface FetchReposResultDevice {
+  repos: DeviceRepo[];
+  deniedOrgs: string[];
+}
+
+/**
+ * Fetch user's repositories (including org repos)
+ * Also returns list of organizations that denied access
+ */
+export async function fetchUserRepos(token: string): Promise<FetchReposResultDevice> {
+  const repos: DeviceRepo[] = [];
+  const deniedOrgs: string[] = [];
+
+  let page = 1;
+  const perPage = 100;
+
+  // First, fetch user's own repos
   while (true) {
     const response = await fetch(
       `${GITHUB_API_URL}/user/repos?per_page=${perPage}&page=${page}&sort=pushed&direction=desc`,
@@ -231,7 +346,31 @@ export async function fetchUserRepos(token: string): Promise<Array<{
     }
   }
 
-  return repos;
+  // Fetch user's organizations
+  const orgs = await fetchUserOrgsDevice(token);
+
+  // Fetch repos from each organization
+  for (const org of orgs) {
+    const result = await fetchOrgReposDevice(token, org);
+    if (result.accessDenied) {
+      deniedOrgs.push(org);
+    } else {
+      repos.push(...result.repos);
+    }
+  }
+
+  // Deduplicate repos by full name (user/repos may overlap with org repos)
+  const seen = new Set<string>();
+  const uniqueRepos = repos.filter(repo => {
+    const key = repo.displayName;
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+
+  return { repos: uniqueRepos, deniedOrgs };
 }
 
 /**

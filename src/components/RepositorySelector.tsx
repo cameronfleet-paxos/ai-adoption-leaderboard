@@ -1,6 +1,6 @@
 import { Repository } from '@/lib/github-client';
 import { useState, useMemo } from 'react';
-import { Search, X, Check, GitBranch } from 'lucide-react';
+import { Search, X, Check, GitBranch, AlertTriangle } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -12,9 +12,10 @@ interface RepositorySelectorProps {
   selectedRepos: string[];
   onRepoChange: (selectedRepos: string[]) => void;
   availableRepos: Repository[];
+  deniedOrgs?: string[];
 }
 
-export function RepositorySelector({ selectedRepos, onRepoChange, availableRepos }: RepositorySelectorProps) {
+export function RepositorySelector({ selectedRepos, onRepoChange, availableRepos, deniedOrgs = [] }: RepositorySelectorProps) {
   const [searchQuery, setSearchQuery] = useState('');
 
   const filteredRepos = useMemo(() => {
@@ -112,6 +113,30 @@ export function RepositorySelector({ selectedRepos, onRepoChange, availableRepos
           )}
         </div>
         
+        {/* Organization access warning */}
+        {deniedOrgs.length > 0 && (
+          <div className="rounded-lg border border-orange-200 bg-orange-50 p-4 dark:border-orange-900/50 dark:bg-orange-900/10">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="h-5 w-5 text-orange-600 dark:text-orange-400 flex-shrink-0 mt-0.5" />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-orange-800 dark:text-orange-200">
+                  Organization access not granted
+                </p>
+                <p className="text-sm text-orange-700 dark:text-orange-300 mt-1">
+                  The following organization{deniedOrgs.length > 1 ? 's have' : ' has'} not granted access to this app:{' '}
+                  <span className="font-medium">{deniedOrgs.join(', ')}</span>
+                </p>
+                <p className="text-xs text-orange-600 dark:text-orange-400 mt-2">
+                  An organization admin needs to approve this app at{' '}
+                  <code className="bg-orange-100 dark:bg-orange-900/30 px-1 rounded">
+                    github.com/organizations/[org]/settings/oauth_application_policy
+                  </code>
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Repository list */}
         <div className="max-h-96 overflow-y-auto space-y-2">
           {filteredRepos.length === 0 ? (
