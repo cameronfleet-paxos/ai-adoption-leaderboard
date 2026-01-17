@@ -1,35 +1,76 @@
 'use client';
 
-import { useState, useEffect, useCallback, Suspense } from 'react';
+import { useState, useEffect, useCallback, useMemo, Suspense } from 'react';
 import { useSearchParams, useRouter, usePathname } from 'next/navigation';
 import { Leaderboard } from '@/components/Leaderboard';
 import { StatsCards } from '@/components/StatsCards';
 import { Header } from '@/components/Header';
 import { DateRangeSelector } from '@/components/DateRangeSelector';
 import { RepositorySelector } from '@/components/RepositorySelector';
-import { Repository } from '@/lib/github';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
+import { TokenAuth } from '@/components/TokenAuth';
+import { OAuthLogin } from '@/components/OAuthLogin';
+import {
+  type Repository,
+  type AIToolBreakdown,
+  type AITool,
+  type ClaudeModelBreakdown,
+  type ClaudeModel,
+  fetchCommitDataClient,
+  fetchUserReposClient,
+  fetchUserClient,
+  validateTokenClient,
+  loadAuth,
+  saveAuth,
+  clearAuth,
+} from '@/lib/github-client';
+
+// Check if OAuth is available (client-side check)
+const isOAuthAvailable = !!process.env.NEXT_PUBLIC_GITHUB_CLIENT_ID;
 
 function HomeContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const pathname = usePathname();
   const [isLoading, setIsLoading] = useState(false);
+  const [isInitializing, setIsInitializing] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [installationId, setInstallationId] = useState<number | null>(null);
-  const [repositories, setRepositories] = useState<Repository[]>([]);
+  const [progressMessage, setProgressMessage] = useState<string | null>(null);
+
+  // Auth state
+  const [token, setToken] = useState<string | null>(null);
+  const [user, setUser] = useState<{ login: string; avatar_url: string } | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [showPATForm, setShowPATForm] = useState(false);
+
+  // Repository state
+  const [repositories, setRepositories] = useState<Repository[]>([]);
+  const [selectedRepos, setSelectedRepos] = useState<string[]>([]);
+
+  const emptyToolBreakdown = useMemo<AIToolBreakdown>(() => ({
+    'claude-coauthor': 0,
+    'claude-generated': 0,
+    'copilot': 0,
+  }), []);
+
+  const emptyModelBreakdown = useMemo<ClaudeModelBreakdown>(() => ({
+    opus: 0,
+    sonnet: 0,
+    haiku: 0,
+    unknown: 0,
+  }), []);
+
   const [data, setData] = useState({
     totalCommits: 0,
-    claudeCommits: 0,
+    aiCommits: 0,
+    aiToolBreakdown: emptyToolBreakdown,
+    claudeModelBreakdown: emptyModelBreakdown,
     activeUsers: 0,
     leaderboard: [] as Array<{
       rank: number;
       username: string;
       commits: number;
       totalCommits: number;
-      claudePercentage: number;
+      aiPercentage: number;
       avatar: string;
       commitDetails: Array<{
         sha: string;
@@ -37,39 +78,42 @@ function HomeContent() {
         date: string;
         url: string;
         repository: string;
+        aiTool: AITool;
+        claudeModel?: ClaudeModel;
       }>;
+      aiToolBreakdown: AIToolBreakdown;
+      claudeModelBreakdown: ClaudeModelBreakdown;
     }>
   });
-  
+
   // Initialize date range to past week (inclusive of today)
   const getDefaultDateRange = () => {
     const end = new Date();
     const start = new Date();
-    
+
     // Set end to tomorrow to include all of today
     end.setDate(end.getDate() + 1);
     // Set start to 6 days ago (7 days total including today)
     start.setDate(start.getDate() - 6);
-    
+
     return {
       startDate: start.toISOString().split('T')[0],
       endDate: end.toISOString().split('T')[0]
     };
   };
-  
+
   const [dateRange, setDateRange] = useState(getDefaultDateRange());
-  const [selectedRepos, setSelectedRepos] = useState<string[]>([]);
 
   // Update URL when selected repos change
   const updateUrlWithRepos = useCallback((repos: string[]) => {
     const params = new URLSearchParams(searchParams.toString());
-    
+
     if (repos.length > 0) {
       params.set('repos', encodeURIComponent(JSON.stringify(repos)));
     } else {
       params.delete('repos');
     }
-    
+
     const newUrl = params.toString() ? `${pathname}?${params.toString()}` : pathname;
     router.replace(newUrl, { scroll: false });
   }, [searchParams, pathname, router]);
@@ -79,206 +123,268 @@ function HomeContent() {
     updateUrlWithRepos(newSelectedRepos);
   }, [updateUrlWithRepos]);
 
-  // Fetch session data on component mount
+  // Load auth state on mount
   useEffect(() => {
-    const errorParam = searchParams.get('error');
-    
-    if (errorParam) {
-      setError(decodeURIComponent(errorParam));
-      return;
-    }
-
-    // Fetch session data from API
-    const fetchSession = async () => {
-      try {
-        const response = await fetch('/api/session');
-        const sessionData = await response.json();
-        
-        if (sessionData.isAuthenticated) {
-          setInstallationId(sessionData.installationId);
-          setRepositories(sessionData.repositories);
-          
-          // Get selected repos from URL or default to empty
-          const reposFromUrl = searchParams.get('repos');
-          if (reposFromUrl) {
-            try {
-              const decodedRepos = JSON.parse(decodeURIComponent(reposFromUrl));
-              const validRepos = decodedRepos.filter((repoName: string) => 
-                sessionData.repositories.some((repo: Repository) => repo.name === repoName)
-              );
-              setSelectedRepos(validRepos);
-            } catch (error) {
-              console.error('Failed to parse repos from URL:', error);
-              setSelectedRepos([]);
-            }
-          } else {
-            setSelectedRepos([]);
-          }
-          
-          setIsAuthenticated(true);
-          setError(null);
-        } else {
-          setIsAuthenticated(false);
-          setInstallationId(null);
-          setRepositories([]);
-          setSelectedRepos([]);
-        }
-      } catch (error) {
-        console.error('Failed to fetch session data:', error);
-        setError('Failed to load authentication state');
+    const initAuth = async () => {
+      // Check for error from OAuth redirect
+      const errorParam = searchParams.get('error');
+      if (errorParam) {
+        setError(decodeURIComponent(errorParam));
+        // Clear the error from URL
+        const params = new URLSearchParams(searchParams.toString());
+        params.delete('error');
+        router.replace(params.toString() ? `${pathname}?${params.toString()}` : pathname, { scroll: false });
+        setIsInitializing(false);
+        return;
       }
-    };
-    
-    fetchSession();
-  }, [searchParams]);
 
+      // First, check for OAuth session (server-side token in cookie)
+      if (isOAuthAvailable) {
+        try {
+          const sessionResponse = await fetch('/api/auth/session');
+          const session = await sessionResponse.json();
+
+          if (session.authenticated && session.accessToken) {
+            setToken(session.accessToken);
+            setUser(session.user);
+            setIsAuthenticated(true);
+
+            // Also save to localStorage for consistency
+            saveAuth(session.accessToken, session.user);
+
+            // Fetch repositories
+            try {
+              const repos = await fetchUserReposClient(session.accessToken);
+              setRepositories(repos);
+
+              // Restore selected repos from URL
+              const reposFromUrl = searchParams.get('repos');
+              if (reposFromUrl) {
+                try {
+                  const decodedRepos = JSON.parse(decodeURIComponent(reposFromUrl));
+                  const validRepos = decodedRepos.filter((repoName: string) =>
+                    repos.some((repo) => repo.name === repoName)
+                  );
+                  setSelectedRepos(validRepos);
+                } catch {
+                  setSelectedRepos([]);
+                }
+              }
+            } catch (err) {
+              console.error('Failed to fetch repositories:', err);
+              setError('Failed to load repositories. Please try logging in again.');
+            }
+
+            setIsInitializing(false);
+            return;
+          }
+        } catch (err) {
+          console.error('Failed to check session:', err);
+        }
+      }
+
+      // Fall back to localStorage token (PAT mode or cached OAuth token)
+      const { token: savedToken, user: savedUser } = loadAuth();
+
+      if (savedToken) {
+        // Validate the token is still good
+        const isValid = await validateTokenClient(savedToken);
+
+        if (isValid) {
+          setToken(savedToken);
+          setUser(savedUser);
+          setIsAuthenticated(true);
+
+          // Fetch repositories
+          try {
+            const repos = await fetchUserReposClient(savedToken);
+            setRepositories(repos);
+
+            // Restore selected repos from URL
+            const reposFromUrl = searchParams.get('repos');
+            if (reposFromUrl) {
+              try {
+                const decodedRepos = JSON.parse(decodeURIComponent(reposFromUrl));
+                const validRepos = decodedRepos.filter((repoName: string) =>
+                  repos.some((repo) => repo.name === repoName)
+                );
+                setSelectedRepos(validRepos);
+              } catch {
+                setSelectedRepos([]);
+              }
+            }
+          } catch (err) {
+            console.error('Failed to fetch repositories:', err);
+            setError('Failed to load repositories. Please try logging in again.');
+            clearAuth();
+            setIsAuthenticated(false);
+          }
+        } else {
+          // Token is invalid, clear it
+          clearAuth();
+        }
+      }
+
+      setIsInitializing(false);
+    };
+
+    initAuth();
+  }, [searchParams, router, pathname]);
+
+  // Handle successful authentication
+  const handleAuthenticated = useCallback(async (newToken: string) => {
+    try {
+      // Fetch user info
+      const userInfo = await fetchUserClient(newToken);
+
+      // Save to localStorage
+      saveAuth(newToken, userInfo);
+
+      setToken(newToken);
+      setUser(userInfo);
+      setIsAuthenticated(true);
+
+      // Fetch repositories
+      const repos = await fetchUserReposClient(newToken);
+      setRepositories(repos);
+    } catch (err) {
+      console.error('Failed to complete authentication:', err);
+      setError('Failed to load user data');
+    }
+  }, []);
+
+  // Fetch commit data
   const fetchData = useCallback(async () => {
-    if (!isAuthenticated || !installationId || selectedRepos.length === 0) {
+    if (!isAuthenticated || !token || selectedRepos.length === 0) {
       setData({
         totalCommits: 0,
-        claudeCommits: 0,
+        aiCommits: 0,
+        aiToolBreakdown: emptyToolBreakdown,
+        claudeModelBreakdown: emptyModelBreakdown,
         activeUsers: 0,
         leaderboard: []
       });
       return;
     }
-    
+
     setIsLoading(true);
+    setError(null);
+
     try {
-      // Filter repositories based on selection
       const reposToFetch = repositories.filter(repo => selectedRepos.includes(repo.name));
-      
-      const response = await fetch('/api/commits', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+
+      const result = await fetchCommitDataClient(
+        token,
+        reposToFetch,
+        {
+          start: new Date(dateRange.startDate),
+          end: new Date(dateRange.endDate)
         },
-        body: JSON.stringify({
-          dateRange: {
-            startDate: dateRange.startDate,
-            endDate: dateRange.endDate
-          },
-          repositories: reposToFetch
-        })
-      });
+        setProgressMessage
+      );
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to fetch commit data');
-      }
-
-      const result = await response.json();
       setData(result);
-      setError(null);
-    } catch (error) {
-      console.error('Error fetching data:', error);
-      const errorMessage = error instanceof Error ? error.message : 'Failed to fetch commit data';
-      setError(errorMessage);
+      setProgressMessage(null);
+    } catch (err) {
+      console.error('Error fetching data:', err);
+      setError(err instanceof Error ? err.message : 'Failed to fetch commit data');
     } finally {
       setIsLoading(false);
     }
-  }, [dateRange.startDate, dateRange.endDate, selectedRepos, isAuthenticated, installationId, repositories]);
-  
+  }, [dateRange.startDate, dateRange.endDate, selectedRepos, isAuthenticated, token, repositories, emptyToolBreakdown, emptyModelBreakdown]);
+
   const handleDateChange = (startDate: string, endDate: string) => {
     setDateRange({ startDate, endDate });
   };
 
+  // Fetch data when dependencies change
   useEffect(() => {
-    if (isAuthenticated) {
+    if (isAuthenticated && selectedRepos.length > 0) {
       fetchData();
     }
-  }, [fetchData, isAuthenticated]);
+  }, [fetchData, isAuthenticated, selectedRepos.length]);
 
-  const handleConnect = () => {
-    window.location.href = '/api/github/auth';
-  };
-
-  const handleLogout = async () => {
-    try {
-      await fetch('/api/session', { method: 'DELETE' });
-      setIsAuthenticated(false);
-      setInstallationId(null);
-      setRepositories([]);
-      setSelectedRepos([]);
-      setError(null);
-    } catch (error) {
-      console.error('Logout failed:', error);
+  const handleLogout = useCallback(async () => {
+    // Clear server-side session if using OAuth
+    if (isOAuthAvailable) {
+      try {
+        await fetch('/api/auth/session', { method: 'DELETE' });
+      } catch (err) {
+        console.error('Failed to clear server session:', err);
+      }
     }
-  };
 
-  // Remove unused handler - keeping for potential future use
-  // const handleReconnect = () => {
-  //   // Clear current state and redirect to auth
-  //   setIsAuthenticated(false);
-  //   setInstallationId(null);
-  //   setRepositories([]);
-  //   setSelectedRepos([]);
-  //   setError(null);
-  //   window.location.href = '/api/github/auth';
-  // };
+    // Clear client-side auth
+    clearAuth();
+    setIsAuthenticated(false);
+    setToken(null);
+    setUser(null);
+    setRepositories([]);
+    setSelectedRepos([]);
+    setShowPATForm(false);
+    setError(null);
+  }, []);
 
-  const handleAddOrganizations = () => {
-    // Redirect to installation flow (keeps existing state)
-    window.location.href = '/api/github/install';
-  };
-
-  // Show error state
-  if (error) {
+  // Show loading while initializing
+  if (isInitializing) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50/30 to-indigo-50/40 dark:from-slate-950 dark:via-slate-900 dark:to-slate-800">
         <div className="container mx-auto px-4 py-8 max-w-7xl">
           <Header />
           <div className="flex items-center justify-center py-16">
-            <Card className="max-w-md">
-              <CardHeader>
-                <CardTitle className="text-destructive">Setup Error</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <p className="text-muted-foreground">{error}</p>
-                <Button onClick={handleConnect} className="w-full">
-                  Try Again
-                </Button>
-              </CardContent>
-            </Card>
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
           </div>
         </div>
       </div>
     );
   }
 
-  // Show connection prompt if not authenticated
+  // Show error state
+  if (error && !isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50/30 to-indigo-50/40 dark:from-slate-950 dark:via-slate-900 dark:to-slate-800">
+        <div className="container mx-auto px-4 py-8 max-w-7xl">
+          <Header />
+          <div className="flex items-center justify-center py-16">
+            <div className="max-w-md text-center">
+              <p className="text-destructive mb-4">{error}</p>
+              <button
+                onClick={() => setError(null)}
+                className="text-primary hover:underline"
+              >
+                Try again
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Show auth prompt if not authenticated
   if (!isAuthenticated) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50/30 to-indigo-50/40 dark:from-slate-950 dark:via-slate-900 dark:to-slate-800">
         <div className="container mx-auto px-4 py-8 max-w-7xl">
           <Header />
           <div className="flex items-center justify-center py-16">
-            <Card className="max-w-lg">
-              <CardHeader className="text-center">
-                <div className="w-16 h-16 bg-gradient-to-br from-blue-600 to-purple-600 rounded-2xl flex items-center justify-center mx-auto mb-4">
-                  <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
-                  </svg>
-                </div>
-                <CardTitle className="text-2xl">Connect GitHub</CardTitle>
-                <CardDescription className="text-base">
-                  Install the AI Adoption Leaderboard app to analyze Claude co-authored commits across your repositories.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                <Button onClick={handleConnect} size="lg" className="w-full">
-                  <svg className="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 24 24">
-                    <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z" />
-                  </svg>
-                  Install & Connect GitHub App
-                </Button>
-                <div className="text-center">
-                  <p className="text-sm text-muted-foreground">
-                    You&apos;ll select which repositories to grant access to during installation
-                  </p>
-                </div>
-              </CardContent>
-            </Card>
+            {isOAuthAvailable && !showPATForm ? (
+              <OAuthLogin onShowPATForm={() => setShowPATForm(true)} />
+            ) : (
+              <div className="space-y-4">
+                <TokenAuth onAuthenticated={handleAuthenticated} />
+                {isOAuthAvailable && showPATForm && (
+                  <div className="text-center">
+                    <button
+                      onClick={() => setShowPATForm(false)}
+                      className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+                    >
+                      Back to GitHub Sign In
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -288,15 +394,15 @@ function HomeContent() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50/30 to-indigo-50/40 dark:from-slate-950 dark:via-slate-900 dark:to-slate-800">
       <div className="container mx-auto px-4 py-8 max-w-7xl">
-        <Header 
+        <Header
           repositoryCount={repositories.length}
-          onManageSettings={() => window.open('https://github.com/settings/installations', '_blank')}
-          onAddOrganizations={handleAddOrganizations}
           onLogout={handleLogout}
           isAuthenticated={isAuthenticated}
+          username={user?.login}
+          avatarUrl={user?.avatar_url}
         />
-        
-        
+
+
         <DateRangeSelector
           startDate={dateRange.startDate}
           endDate={dateRange.endDate}
@@ -311,15 +417,30 @@ function HomeContent() {
           availableRepos={repositories}
         />
 
-        <StatsCards 
+        {error && (
+          <div className="mb-6 p-4 bg-destructive/10 border border-destructive/20 rounded-lg text-destructive">
+            {error}
+          </div>
+        )}
+
+        {progressMessage && (
+          <div className="mb-6 p-4 bg-primary/10 border border-primary/20 rounded-lg text-primary flex items-center gap-2">
+            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary"></div>
+            {progressMessage}
+          </div>
+        )}
+
+        <StatsCards
           totalCommits={data.totalCommits}
-          claudeCommits={data.claudeCommits}
+          aiCommits={data.aiCommits}
+          aiToolBreakdown={data.aiToolBreakdown}
+          claudeModelBreakdown={data.claudeModelBreakdown}
           activeUsers={data.activeUsers}
           isLoading={isLoading}
           hasSelectedRepos={selectedRepos.length > 0}
         />
 
-        <Leaderboard 
+        <Leaderboard
           data={data.leaderboard}
           isLoading={isLoading}
           hasSelectedRepos={selectedRepos.length > 0}

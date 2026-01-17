@@ -5,7 +5,9 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
+import { AI_TOOLS, CLAUDE_MODELS, type AITool, type AIToolBreakdown, type ClaudeModel, type ClaudeModelBreakdown } from '@/lib/github';
 
 interface CommitDetail {
   sha: string;
@@ -13,6 +15,8 @@ interface CommitDetail {
   date: string;
   url: string;
   repository: string;
+  aiTool: AITool;
+  claudeModel?: ClaudeModel;
 }
 
 interface LeaderboardEntry {
@@ -20,9 +24,11 @@ interface LeaderboardEntry {
   username: string;
   commits: number;
   totalCommits: number;
-  claudePercentage: number;
+  aiPercentage: number;
   avatar: string;
   commitDetails: CommitDetail[];
+  aiToolBreakdown: AIToolBreakdown;
+  claudeModelBreakdown: ClaudeModelBreakdown;
 }
 
 interface LeaderboardProps {
@@ -62,6 +68,99 @@ export function Leaderboard({ data, isLoading, hasSelectedRepos = true }: Leader
       default:
         return "outline";
     }
+  };
+
+  // Render AI tool breakdown as colored segments with optional model breakdown
+  const AIToolBreakdownBar = ({
+    toolBreakdown,
+    modelBreakdown,
+    total
+  }: {
+    toolBreakdown: AIToolBreakdown;
+    modelBreakdown: ClaudeModelBreakdown;
+    total: number;
+  }) => {
+    if (total === 0) return null;
+
+    const tools = (['claude-coauthor', 'claude-generated', 'copilot'] as const).filter(
+      tool => toolBreakdown[tool] > 0
+    );
+
+    const models = (['opus', 'sonnet', 'haiku', 'unknown'] as const).filter(
+      model => modelBreakdown[model] > 0
+    );
+
+    // Check if we have Claude commits to show model breakdown
+    const hasClaudeCommits = toolBreakdown['claude-coauthor'] > 0 || toolBreakdown['claude-generated'] > 0;
+
+    return (
+      <TooltipProvider>
+        <div className="flex items-center gap-2">
+          {/* Tool breakdown */}
+          <div className="flex items-center gap-1.5">
+            {tools.map(tool => (
+              <Tooltip key={tool}>
+                <TooltipTrigger asChild>
+                  <div className="flex items-center gap-1">
+                    <div className={cn('w-2 h-2 rounded-full', AI_TOOLS[tool].color)} />
+                    <span className="text-xs text-muted-foreground">{toolBreakdown[tool]}</span>
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p className="font-medium">{AI_TOOLS[tool].label}</p>
+                  <p className="text-xs text-muted-foreground">{AI_TOOLS[tool].description}</p>
+                </TooltipContent>
+              </Tooltip>
+            ))}
+          </div>
+          {/* Model breakdown (shown if any Claude commits) */}
+          {hasClaudeCommits && models.length > 0 && (
+            <>
+              <span className="text-muted-foreground/40">|</span>
+              <div className="flex items-center gap-1">
+                {models.map(model => (
+                  <Tooltip key={model}>
+                    <TooltipTrigger asChild>
+                      <div className="flex items-center gap-0.5">
+                        <div className={cn('w-1.5 h-1.5 rounded-full', CLAUDE_MODELS[model].color)} />
+                        <span className="text-[10px] text-muted-foreground">{modelBreakdown[model]}</span>
+                      </div>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p className="font-medium">{CLAUDE_MODELS[model].label}</p>
+                    </TooltipContent>
+                  </Tooltip>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      </TooltipProvider>
+    );
+  };
+
+  // Get badge for AI tool type with optional model
+  const getAIToolBadge = (aiTool: AITool, claudeModel?: ClaudeModel) => {
+    const tool = AI_TOOLS[aiTool];
+
+    // For Claude tools, show the model if available
+    if ((aiTool === 'claude-coauthor' || aiTool === 'claude-generated') && claudeModel) {
+      const model = CLAUDE_MODELS[claudeModel];
+      return (
+        <Badge variant="outline" className="text-xs gap-1">
+          <div className={cn('w-2 h-2 rounded-full', model.color)} />
+          {model.label}
+          {aiTool === 'claude-generated' && <span className="text-muted-foreground">(Code)</span>}
+        </Badge>
+      );
+    }
+
+    return (
+      <Badge variant="outline" className="text-xs gap-1">
+        <div className={cn('w-2 h-2 rounded-full', tool.color)} />
+        {tool.label}
+      </Badge>
+    );
   };
   if (isLoading) {
     return (
@@ -175,6 +274,11 @@ export function Leaderboard({ data, isLoading, hasSelectedRepos = true }: Leader
                             <Zap className="h-3 w-3" />
                             {entry.commits} AI commits
                           </span>
+                          <AIToolBreakdownBar
+                            toolBreakdown={entry.aiToolBreakdown}
+                            modelBreakdown={entry.claudeModelBreakdown}
+                            total={entry.commits}
+                          />
                           <span className="flex items-center gap-1">
                             <GitCommit className="h-3 w-3" />
                             {entry.totalCommits} total
@@ -185,7 +289,7 @@ export function Leaderboard({ data, isLoading, hasSelectedRepos = true }: Leader
                     <div className="flex items-center space-x-3">
                       <div className="text-right">
                         <div className="text-2xl font-bold text-primary">
-                          {entry.claudePercentage}%
+                          {entry.aiPercentage}%
                         </div>
                         <div className="text-xs text-muted-foreground">adoption rate</div>
                       </div>
@@ -216,7 +320,8 @@ export function Leaderboard({ data, isLoading, hasSelectedRepos = true }: Leader
                                 <p className="font-medium text-sm leading-relaxed mb-2">
                                   {commit.message}
                                 </p>
-                                <div className="flex items-center space-x-3 text-xs text-muted-foreground">
+                                <div className="flex items-center flex-wrap gap-2 text-xs text-muted-foreground">
+                                  {getAIToolBadge(commit.aiTool, commit.claudeModel)}
                                   <Badge variant="outline" className="text-xs">
                                     {commit.repository}
                                   </Badge>

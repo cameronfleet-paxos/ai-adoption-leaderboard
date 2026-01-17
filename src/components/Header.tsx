@@ -1,4 +1,4 @@
-import { Settings, ExternalLink, Plus, LogOut } from 'lucide-react';
+import { LogOut } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -11,18 +11,18 @@ import {
 
 interface HeaderProps {
   repositoryCount?: number;
-  onManageSettings?: () => void;
-  onAddOrganizations?: () => void;
   onLogout?: () => void;
   isAuthenticated?: boolean;
+  username?: string;
+  avatarUrl?: string;
 }
 
-export function Header({ 
-  repositoryCount, 
-  onManageSettings, 
-  onAddOrganizations, 
-  onLogout, 
-  isAuthenticated = false 
+export function Header({
+  repositoryCount,
+  onLogout,
+  isAuthenticated = false,
+  username,
+  avatarUrl,
 }: HeaderProps) {
 
   return (
@@ -46,38 +46,37 @@ export function Header({
             <span className="font-semibold text-blue-600 dark:text-blue-400"> Claude co-authored commits</span>
           </p>
         </div>
-        
+
         {isAuthenticated && (
           <div className="absolute top-0 right-0">
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon" className="h-9 w-9">
-                  <Settings className="h-4 w-4" />
-                  <span className="sr-only">Settings</span>
+                <Button variant="ghost" size="sm" className="h-9 gap-2">
+                  {avatarUrl ? (
+                    <img
+                      src={avatarUrl}
+                      alt={username || 'User'}
+                      className="w-6 h-6 rounded-full"
+                    />
+                  ) : (
+                    <div className="w-6 h-6 rounded-full bg-muted" />
+                  )}
+                  <span className="text-sm font-medium">{username}</span>
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-56">
                 <DropdownMenuLabel>
                   <div>
-                    <div className="font-medium">GitHub App Settings</div>
+                    <div className="font-medium">Signed in as {username}</div>
                     <div className="text-xs text-muted-foreground font-normal">
-                      {repositoryCount} {repositoryCount === 1 ? 'repository' : 'repositories'} connected
+                      {repositoryCount} {repositoryCount === 1 ? 'repository' : 'repositories'} available
                     </div>
                   </div>
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={onManageSettings}>
-                  <ExternalLink className="mr-2 h-4 w-4" />
-                  Manage Settings
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={onAddOrganizations}>
-                  <Plus className="mr-2 h-4 w-4" />
-                  Add Organizations
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={onLogout} className="text-destructive focus:text-destructive">
                   <LogOut className="mr-2 h-4 w-4" />
-                  Logout
+                  Sign Out
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>

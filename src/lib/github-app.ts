@@ -168,7 +168,7 @@ export class GitHubAppAuth {
     // Process user installations
     
     if (!installationsData.installations || installationsData.installations.length === 0) {
-      throw new Error('No installations found. Please install the GitHub App first by visiting: https://github.com/apps/ai-adoption-leaderboard/installations/new');
+      throw new Error('No installations found. Please install the GitHub App first by clicking "Connect GitHub" on the home page.');
     }
 
     // Get all repositories from all installations
