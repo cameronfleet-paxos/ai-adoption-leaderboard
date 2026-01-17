@@ -38,36 +38,17 @@ npm install
 cp .env.local.example .env.local
 ```
 
-### 🛠️ Setup GitHub App
+### ⚙️ Configure Environment (PAT Mode for Local Dev)
 
-1. Go to [GitHub Settings > Developer settings > GitHub Apps](https://github.com/settings/apps)
-2. Click "New GitHub App"
-3. Configure:
-   - **App name**: `AI Adoption Leaderboard Dev` (or your preferred name)
-   - **Homepage URL**: `http://localhost:3000`
-   - **Callback URL**: `http://localhost:3000/api/github/callback`
-   - **Setup URL**: `http://localhost:3000/api/github/installation-callback`
-   - **Repository permissions**: 
-     - Contents: Read
-     - Metadata: Read
-     - Pull requests: Read
-   - **User permissions**: Email addresses: Read (optional)
-4. Generate a private key and download it
-5. Note your App ID, Client ID, and Client Secret
+For local development, use a Personal Access Token:
 
-### ⚙️ Configure Environment
-
-Update `.env.local` with your GitHub App credentials:
+1. Create a token at [GitHub Settings > Tokens](https://github.com/settings/tokens/new?scopes=repo,read:user)
+2. Update `.env.local`:
 
 ```bash
-# GitHub App Configuration
-GITHUB_APP_ID=123456
-GITHUB_APP_CLIENT_ID=Iv1.abcdef1234567890
-GITHUB_APP_CLIENT_SECRET=abcdef1234567890abcdef1234567890abcdef12
-GITHUB_APP_PRIVATE_KEY="-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA...\n-----END RSA PRIVATE KEY-----"
-
-# Session Security (generate a random 32+ character string)
-SESSION_SECRET=your-secure-random-session-secret-32-chars-minimum
+GITHUB_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+GITHUB_REPOS=owner/repo1,owner/repo2
+AUTH_MODE_OVERRIDE=pat
 ```
 
 ### 🏁 Start Development
@@ -78,44 +59,61 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000) and start analyzing your AI adoption!
 
-## 🌐 Deployment
+## 🌐 Deployment (Vercel)
 
-### Deploy to Vercel
+### 1. Create GitHub OAuth App
+
+1. Go to [GitHub Settings > Developer settings > OAuth Apps](https://github.com/settings/developers)
+2. Click "New OAuth App"
+3. Configure:
+   - **Application name**: `AI Adoption Leaderboard`
+   - **Homepage URL**: `https://your-app.vercel.app`
+   - **Authorization callback URL**: `https://your-app.vercel.app/api/auth/github/callback`
+4. Click "Register application"
+5. Generate a Client Secret
+
+### 2. Deploy to Vercel
 
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fcameronfleet-paxos%2Fai-adoption-leaderboard)
 
-1. Click the deploy button above
-2. Create a production GitHub App with your Vercel deployment URL
-3. Add environment variables in Vercel dashboard
+### 3. Add Environment Variables
+
+In Vercel Project Settings > Environment Variables:
+
+| Variable | Value |
+|----------|-------|
+| `NEXT_PUBLIC_GITHUB_CLIENT_ID` | Your OAuth App Client ID |
+| `GITHUB_CLIENT_SECRET` | Your OAuth App Client Secret |
+
 4. Redeploy to apply configuration
 
 ## 🏗️ How It Works
 
-1. **🔐 Secure Authentication**: Users authorize the GitHub App to access their selected repositories
+1. **🔐 Secure Authentication**: Users sign in with GitHub OAuth to grant repository access
 2. **📂 Repository Selection**: Choose which repositories to analyze with search and filtering
-3. **🔍 Commit Analysis**: The app scans commits looking for Claude co-author signatures:
-   - `Co-Authored-By: Claude <noreply@anthropic.com>`
-   - `Co-authored-by: Claude <noreply@anthropic.com>`
+3. **🔍 Commit Analysis**: The app scans commits looking for AI co-author signatures:
+   - Claude: `Co-Authored-By: Claude <noreply@anthropic.com>`
+   - GitHub Copilot: `Co-authored-by: Copilot <noreply@github.com>`
 4. **📊 Statistical Analysis**: Calculates adoption rates, rankings, and detailed metrics
 5. **🏆 Leaderboard Generation**: Creates beautiful, interactive leaderboards with achievements
 
 ## 🛡️ Security & Privacy
 
-- ✅ **No personal access tokens** - Uses secure GitHub App OAuth flow
-- ✅ **User-controlled access** - Users select which repositories to grant access to
-- ✅ **Session-based security** - Encrypted sessions with automatic expiration
+- ✅ **Secure OAuth flow** - Client secret stored server-side in Edge Functions
+- ✅ **User-controlled access** - Users authorize which repositories to grant access to
+- ✅ **httpOnly cookies** - Tokens stored securely, not accessible to JavaScript
 - ✅ **No data persistence** - No user data stored on servers
-- ✅ **Short-lived tokens** - Installation tokens expire automatically
+- ✅ **Token expiration** - Access tokens expire after 8 hours
 
 ## 🚀 Technology Stack
 
-- **Framework**: Next.js 15 with App Router
+- **Framework**: Next.js 16 with App Router
 - **UI**: shadcn/ui + Radix UI primitives
 - **Styling**: Tailwind CSS v4
 - **Icons**: Lucide React
-- **Authentication**: GitHub App OAuth + JWT
-- **Session Management**: iron-session
-- **Deployment**: Vercel (recommended)
+- **Authentication**: GitHub OAuth (Web Application Flow)
+- **API**: Vercel Edge Functions
+- **Deployment**: Vercel
 
 ## 📖 Documentation
 

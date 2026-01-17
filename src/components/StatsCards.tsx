@@ -2,7 +2,7 @@ import { TrendingUp, GitCommit, Users, Zap } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
-import { AI_TOOLS, CLAUDE_MODELS, type AIToolBreakdown, type ClaudeModelBreakdown } from '@/lib/github';
+import { AI_TOOLS, CLAUDE_MODELS, type AIToolBreakdown, type ClaudeModelBreakdown } from '@/lib/github-client';
 
 interface StatsCardsProps {
   totalCommits: number;

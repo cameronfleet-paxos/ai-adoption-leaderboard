@@ -1,4 +1,4 @@
-import { Repository } from '@/lib/github';
+import { Repository } from '@/lib/github-client';
 import { useState, useMemo } from 'react';
 import { Search, X, Check, GitBranch } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
