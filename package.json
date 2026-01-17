@@ -3,7 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --turbopack",
+    "dev": "node scripts/dev.js",
+    "dev:auto": "next dev --turbopack",
+    "dev:pat": "AUTH_MODE_OVERRIDE=pat next dev --turbopack",
+    "dev:app": "AUTH_MODE_OVERRIDE=app next dev --turbopack",
     "build": "next build",
     "start": "next start",
     "lint": "next lint"
@@ -16,6 +19,7 @@
     "@radix-ui/react-icons": "^1.3.2",
     "@radix-ui/react-separator": "^1.1.7",
     "@radix-ui/react-slot": "^1.2.3",
+    "@radix-ui/react-tooltip": "^1.2.8",
     "@types/jsonwebtoken": "^9.0.10",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
