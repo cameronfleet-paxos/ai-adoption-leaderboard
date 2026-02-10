@@ -12,6 +12,7 @@ export function TokenAuth({ onAuthenticated }: TokenAuthProps) {
   const [token, setToken] = useState('');
   const [isValidating, setIsValidating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [savedMessage, setSavedMessage] = useState<string | null>(null);
 
   const handleSubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
@@ -25,29 +26,30 @@ export function TokenAuth({ onAuthenticated }: TokenAuthProps) {
     setError(null);
 
     try {
-      // Validate the token by making a request to GitHub
-      const response = await fetch('https://api.github.com/user', {
-        headers: {
-          'Authorization': `Bearer ${token.trim()}`,
-          'Accept': 'application/vnd.github.v3+json',
-        },
+      // Call the dev setup endpoint to validate and save to .env.local
+      const response = await fetch('/api/dev/setup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: token.trim() }),
       });
 
+      const result = await response.json();
+
       if (!response.ok) {
-        if (response.status === 401) {
-          throw new Error('Invalid token. Please check and try again.');
-        }
-        throw new Error('Failed to validate token');
+        throw new Error(result.error || 'Failed to save token');
       }
 
-      // Token is valid - save and notify parent
-      onAuthenticated(token.trim());
+      // Show success message and reload after a short delay
+      setSavedMessage('Token saved to .env.local — restarting...');
+      setTimeout(() => {
+        window.location.reload();
+      }, 1500);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to validate token');
     } finally {
       setIsValidating(false);
     }
-  }, [token, onAuthenticated]);
+  }, [token]);
 
   return (
     <Card className="max-w-lg">
@@ -63,71 +65,78 @@ export function TokenAuth({ onAuthenticated }: TokenAuthProps) {
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label htmlFor="token" className="block text-sm font-medium mb-2">
-              Personal Access Token
-            </label>
-            <input
-              id="token"
-              type="password"
-              value={token}
-              onChange={(e) => setToken(e.target.value)}
-              placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
-              className="w-full px-3 py-2 border border-input rounded-md bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-              autoComplete="off"
-            />
+        {savedMessage ? (
+          <div className="text-center py-4">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-3"></div>
+            <p className="text-sm text-muted-foreground">{savedMessage}</p>
           </div>
-
-          {error && (
-            <p className="text-sm text-destructive">{error}</p>
-          )}
-
-          <Button type="submit" size="lg" className="w-full" disabled={isValidating}>
-            {isValidating ? (
-              <>
-                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
-                Validating...
-              </>
-            ) : (
-              'Connect'
-            )}
-          </Button>
-
-          <div className="text-center space-y-3 pt-2">
-            <p className="text-xs text-muted-foreground">
-              Your token is stored locally in your browser and never sent to any server.
-            </p>
-            <div className="space-y-1">
-              <a
-                href="https://github.com/settings/tokens/new?scopes=public_repo,read:org&description=AI%20Adoption%20Leaderboard%20(public%20repos)"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
-              >
-                Create token (public repos only)
-                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                </svg>
-              </a>
-              <span className="text-xs text-muted-foreground block">or</span>
-              <a
-                href="https://github.com/settings/tokens/new?scopes=repo,read:org&description=AI%20Adoption%20Leaderboard%20(all%20repos)"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground hover:underline"
-              >
-                Create token (include private repos)
-                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                </svg>
-              </a>
+        ) : (
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <label htmlFor="token" className="block text-sm font-medium mb-2">
+                Personal Access Token
+              </label>
+              <input
+                id="token"
+                type="password"
+                value={token}
+                onChange={(e) => setToken(e.target.value)}
+                placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
+                className="w-full px-3 py-2 border border-input rounded-md bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                autoComplete="off"
+              />
             </div>
-            <p className="text-xs text-muted-foreground">
-              Minimum scopes: <code className="bg-muted px-1 rounded">public_repo</code> and <code className="bg-muted px-1 rounded">read:org</code>
-            </p>
-          </div>
-        </form>
+
+            {error && (
+              <p className="text-sm text-destructive">{error}</p>
+            )}
+
+            <Button type="submit" size="lg" className="w-full" disabled={isValidating}>
+              {isValidating ? (
+                <>
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                  Validating...
+                </>
+              ) : (
+                'Connect'
+              )}
+            </Button>
+
+            <div className="text-center space-y-3 pt-2">
+              <p className="text-xs text-muted-foreground">
+                Your token will be saved to <code className="bg-muted px-1 rounded">.env.local</code> and never stored in the browser.
+              </p>
+              <div className="space-y-1">
+                <a
+                  href="https://github.com/settings/tokens/new?scopes=public_repo,read:org&description=AI%20Adoption%20Leaderboard%20(public%20repos)"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
+                >
+                  Create token (public repos only)
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                  </svg>
+                </a>
+                <span className="text-xs text-muted-foreground block">or</span>
+                <a
+                  href="https://github.com/settings/tokens/new?scopes=repo,read:org&description=AI%20Adoption%20Leaderboard%20(all%20repos)"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground hover:underline"
+                >
+                  Create token (include private repos)
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                  </svg>
+                </a>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Minimum scopes: <code className="bg-muted px-1 rounded">public_repo</code> and <code className="bg-muted px-1 rounded">read:org</code>
+              </p>
+            </div>
+          </form>
+        )}
       </CardContent>
     </Card>
   );

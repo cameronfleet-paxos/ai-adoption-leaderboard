@@ -4,11 +4,7 @@ import { useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 
-interface OAuthLoginProps {
-  onShowPATForm?: () => void;
-}
-
-export function OAuthLogin({ onShowPATForm }: OAuthLoginProps) {
+export function OAuthLogin() {
   const [includePrivate, setIncludePrivate] = useState(false);
 
   const handleLogin = () => {
@@ -66,16 +62,6 @@ export function OAuthLogin({ onShowPATForm }: OAuthLoginProps) {
           </p>
         </div>
 
-        {onShowPATForm && (
-          <div className="pt-4 border-t">
-            <button
-              onClick={onShowPATForm}
-              className="w-full text-sm text-muted-foreground hover:text-foreground transition-colors"
-            >
-              Use Personal Access Token instead
-            </button>
-          </div>
-        )}
       </CardContent>
     </Card>
   );

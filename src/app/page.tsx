@@ -16,12 +16,6 @@ import {
   type ClaudeModelBreakdown,
   type ClaudeModel,
   fetchCommitDataClient,
-  fetchUserReposClient,
-  fetchUserClient,
-  validateTokenClient,
-  loadAuth,
-  saveAuth,
-  clearAuth,
 } from '@/lib/github-client';
 
 // Check if OAuth is available (client-side check)
@@ -40,12 +34,11 @@ function HomeContent() {
   const [token, setToken] = useState<string | null>(null);
   const [user, setUser] = useState<{ login: string; avatar_url: string } | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [showPATForm, setShowPATForm] = useState(false);
 
   // Repository state
   const [repositories, setRepositories] = useState<Repository[]>([]);
   const [selectedRepos, setSelectedRepos] = useState<string[]>([]);
-  const [deniedOrgs, setDeniedOrgs] = useState<string[]>([]);
+  const [hasMoreRepos, setHasMoreRepos] = useState(false);
 
   const emptyToolBreakdown = useMemo<AIToolBreakdown>(() => ({
     'claude-coauthor': 0,
@@ -124,14 +117,13 @@ function HomeContent() {
     updateUrlWithRepos(newSelectedRepos);
   }, [updateUrlWithRepos]);
 
-  // Load auth state on mount
+  // Load auth state on mount — always use session endpoint (works for both OAuth and PAT)
   useEffect(() => {
     const initAuth = async () => {
       // Check for error from OAuth redirect
       const errorParam = searchParams.get('error');
       if (errorParam) {
         setError(decodeURIComponent(errorParam));
-        // Clear the error from URL
         const params = new URLSearchParams(searchParams.toString());
         params.delete('error');
         router.replace(params.toString() ? `${pathname}?${params.toString()}` : pathname, { scroll: false });
@@ -139,69 +131,23 @@ function HomeContent() {
         return;
       }
 
-      // First, check for OAuth session (server-side token in cookie)
-      if (isOAuthAvailable) {
-        try {
-          const sessionResponse = await fetch('/api/auth/session');
-          const session = await sessionResponse.json();
+      // Check session endpoint — handles both OAuth (cookie) and PAT (.env.local) modes
+      try {
+        const sessionResponse = await fetch('/api/auth/session');
+        const session = await sessionResponse.json();
 
-          if (session.authenticated && session.accessToken) {
-            setToken(session.accessToken);
-            setUser(session.user);
-            setIsAuthenticated(true);
-
-            // Also save to localStorage for consistency
-            saveAuth(session.accessToken, session.user);
-
-            // Fetch repositories
-            try {
-              const { repos, deniedOrgs: denied } = await fetchUserReposClient(session.accessToken);
-              setRepositories(repos);
-              setDeniedOrgs(denied);
-
-              // Restore selected repos from URL
-              const reposFromUrl = searchParams.get('repos');
-              if (reposFromUrl) {
-                try {
-                  const decodedRepos = JSON.parse(decodeURIComponent(reposFromUrl));
-                  const validRepos = decodedRepos.filter((repoName: string) =>
-                    repos.some((repo) => repo.name === repoName)
-                  );
-                  setSelectedRepos(validRepos);
-                } catch {
-                  setSelectedRepos([]);
-                }
-              }
-            } catch (err) {
-              console.error('Failed to fetch repositories:', err);
-              setError('Failed to load repositories. Please try logging in again.');
-            }
-
-            setIsInitializing(false);
-            return;
-          }
-        } catch (err) {
-          console.error('Failed to check session:', err);
-        }
-      }
-
-      // Fall back to localStorage token (PAT mode or cached OAuth token)
-      const { token: savedToken, user: savedUser } = loadAuth();
-
-      if (savedToken) {
-        // Validate the token is still good
-        const isValid = await validateTokenClient(savedToken);
-
-        if (isValid) {
-          setToken(savedToken);
-          setUser(savedUser);
+        if (session.authenticated && session.accessToken) {
+          setToken(session.accessToken);
+          setUser(session.user);
           setIsAuthenticated(true);
 
-          // Fetch repositories
+          // Fetch first page of repositories via server-side endpoint
           try {
-            const { repos, deniedOrgs: denied } = await fetchUserReposClient(savedToken);
+            const reposResponse = await fetch('/api/repos?page=1');
+            if (!reposResponse.ok) throw new Error('Failed to fetch repositories');
+            const { repos, hasMore } = await reposResponse.json();
             setRepositories(repos);
-            setDeniedOrgs(denied);
+            setHasMoreRepos(hasMore);
 
             // Restore selected repos from URL
             const reposFromUrl = searchParams.get('repos');
@@ -209,7 +155,7 @@ function HomeContent() {
               try {
                 const decodedRepos = JSON.parse(decodeURIComponent(reposFromUrl));
                 const validRepos = decodedRepos.filter((repoName: string) =>
-                  repos.some((repo) => repo.name === repoName)
+                  repos.some((repo: Repository) => repo.name === repoName)
                 );
                 setSelectedRepos(validRepos);
               } catch {
@@ -219,13 +165,13 @@ function HomeContent() {
           } catch (err) {
             console.error('Failed to fetch repositories:', err);
             setError('Failed to load repositories. Please try logging in again.');
-            clearAuth();
-            setIsAuthenticated(false);
           }
-        } else {
-          // Token is invalid, clear it
-          clearAuth();
+
+          setIsInitializing(false);
+          return;
         }
+      } catch (err) {
+        console.error('Failed to check session:', err);
       }
 
       setIsInitializing(false);
@@ -234,27 +180,11 @@ function HomeContent() {
     initAuth();
   }, [searchParams, router, pathname]);
 
-  // Handle successful authentication
-  const handleAuthenticated = useCallback(async (newToken: string) => {
-    try {
-      // Fetch user info
-      const userInfo = await fetchUserClient(newToken);
-
-      // Save to localStorage
-      saveAuth(newToken, userInfo);
-
-      setToken(newToken);
-      setUser(userInfo);
-      setIsAuthenticated(true);
-
-      // Fetch repositories
-      const { repos, deniedOrgs: denied } = await fetchUserReposClient(newToken);
-      setRepositories(repos);
-      setDeniedOrgs(denied);
-    } catch (err) {
-      console.error('Failed to complete authentication:', err);
-      setError('Failed to load user data');
-    }
+  // Handle successful authentication (from TokenAuth — triggers page reload so this is mainly a fallback)
+  const handleAuthenticated = useCallback(async () => {
+    // TokenAuth now saves to .env.local and reloads the page,
+    // so initAuth will pick up the session on next load.
+    window.location.reload();
   }, []);
 
   // Fetch commit data
@@ -318,14 +248,11 @@ function HomeContent() {
       }
     }
 
-    // Clear client-side auth
-    clearAuth();
     setIsAuthenticated(false);
     setToken(null);
     setUser(null);
     setRepositories([]);
     setSelectedRepos([]);
-    setShowPATForm(false);
     setError(null);
   }, []);
 
@@ -372,22 +299,10 @@ function HomeContent() {
         <div className="container mx-auto px-4 py-8 max-w-7xl">
           <Header />
           <div className="flex items-center justify-center py-16">
-            {isOAuthAvailable && !showPATForm ? (
-              <OAuthLogin onShowPATForm={() => setShowPATForm(true)} />
+            {isOAuthAvailable ? (
+              <OAuthLogin />
             ) : (
-              <div className="space-y-4">
-                <TokenAuth onAuthenticated={handleAuthenticated} />
-                {isOAuthAvailable && showPATForm && (
-                  <div className="text-center">
-                    <button
-                      onClick={() => setShowPATForm(false)}
-                      className="text-sm text-muted-foreground hover:text-foreground transition-colors"
-                    >
-                      Back to GitHub Sign In
-                    </button>
-                  </div>
-                )}
-              </div>
+              <TokenAuth onAuthenticated={handleAuthenticated} />
             )}
           </div>
         </div>
@@ -419,7 +334,11 @@ function HomeContent() {
           selectedRepos={selectedRepos}
           onRepoChange={handleRepoChange}
           availableRepos={repositories}
-          deniedOrgs={deniedOrgs}
+          hasMoreRepos={hasMoreRepos}
+          onReposLoaded={(repos, hasMore) => {
+            setRepositories(repos);
+            setHasMoreRepos(hasMore);
+          }}
         />
 
         {error && (

@@ -1,6 +1,6 @@
 import { Repository } from '@/lib/github-client';
-import { useState, useMemo } from 'react';
-import { Search, X, Check, GitBranch, AlertTriangle } from 'lucide-react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { Search, X, Check, GitBranch, Loader2 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -12,41 +12,123 @@ interface RepositorySelectorProps {
   selectedRepos: string[];
   onRepoChange: (selectedRepos: string[]) => void;
   availableRepos: Repository[];
-  deniedOrgs?: string[];
+  hasMoreRepos: boolean;
+  onReposLoaded: (repos: Repository[], hasMore: boolean) => void;
 }
 
-export function RepositorySelector({ selectedRepos, onRepoChange, availableRepos, deniedOrgs = [] }: RepositorySelectorProps) {
+export function RepositorySelector({
+  selectedRepos,
+  onRepoChange,
+  availableRepos,
+  hasMoreRepos,
+  onReposLoaded,
+}: RepositorySelectorProps) {
   const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<Repository[] | null>(null);
+  const [searchHasMore, setSearchHasMore] = useState(false);
+  const [searchPage, setSearchPage] = useState(1);
+  const [isSearching, setIsSearching] = useState(false);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [browsePage, setBrowsePage] = useState(1);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const filteredRepos = useMemo(() => {
-    if (!searchQuery.trim()) return availableRepos;
-    
-    const query = searchQuery.toLowerCase();
-    return availableRepos.filter(repo => 
-      repo.name.toLowerCase().includes(query) ||
-      repo.displayName.toLowerCase().includes(query) ||
-      repo.owner.toLowerCase().includes(query)
-    );
-  }, [availableRepos, searchQuery]);
+  // The repos to display: search results when searching, otherwise the initial loaded repos
+  const displayedRepos = searchResults ?? availableRepos;
+  const displayedHasMore = searchResults ? searchHasMore : hasMoreRepos;
+
+  // Debounced search
+  useEffect(() => {
+    if (debounceRef.current) {
+      clearTimeout(debounceRef.current);
+    }
+
+    const query = searchQuery.trim();
+    if (!query) {
+      setSearchResults(null);
+      setSearchHasMore(false);
+      setSearchPage(1);
+      setIsSearching(false);
+      return;
+    }
+
+    setIsSearching(true);
+    debounceRef.current = setTimeout(async () => {
+      try {
+        const response = await fetch(
+          `/api/repos?search=${encodeURIComponent(query)}&page=1`
+        );
+        if (!response.ok) throw new Error('Search failed');
+        const data = await response.json();
+        setSearchResults(data.repos);
+        setSearchHasMore(data.hasMore);
+        setSearchPage(1);
+      } catch (err) {
+        console.error('Search error:', err);
+      } finally {
+        setIsSearching(false);
+      }
+    }, 300);
+
+    return () => {
+      if (debounceRef.current) {
+        clearTimeout(debounceRef.current);
+      }
+    };
+  }, [searchQuery]);
+
+  const handleLoadMore = useCallback(async () => {
+    setIsLoadingMore(true);
+    try {
+      const query = searchQuery.trim();
+      if (query) {
+        // Load more search results
+        const nextPage = searchPage + 1;
+        const response = await fetch(
+          `/api/repos?search=${encodeURIComponent(query)}&page=${nextPage}`
+        );
+        if (!response.ok) throw new Error('Failed to load more');
+        const data = await response.json();
+        setSearchResults((prev) => [...(prev ?? []), ...data.repos]);
+        setSearchHasMore(data.hasMore);
+        setSearchPage(nextPage);
+      } else {
+        // Load more browse results
+        const nextPage = browsePage + 1;
+        const response = await fetch(`/api/repos?page=${nextPage}`);
+        if (!response.ok) throw new Error('Failed to load more');
+        const data = await response.json();
+        onReposLoaded([...availableRepos, ...data.repos], data.hasMore);
+        setBrowsePage(nextPage);
+      }
+    } catch (err) {
+      console.error('Load more error:', err);
+    } finally {
+      setIsLoadingMore(false);
+    }
+  }, [searchQuery, searchPage, browsePage, availableRepos, onReposLoaded]);
 
   const handleRepoToggle = (repoName: string) => {
     if (selectedRepos.includes(repoName)) {
-      onRepoChange(selectedRepos.filter(repo => repo !== repoName));
+      onRepoChange(selectedRepos.filter((repo) => repo !== repoName));
     } else {
       onRepoChange([...selectedRepos, repoName]);
     }
   };
 
   const handleSelectAll = () => {
-    const visibleRepoNames = filteredRepos.map(repo => repo.name);
-    const allVisibleSelected = visibleRepoNames.every(name => selectedRepos.includes(name));
-    
+    const visibleRepoNames = displayedRepos.map((repo) => repo.name);
+    const allVisibleSelected = visibleRepoNames.every((name) =>
+      selectedRepos.includes(name)
+    );
+
     if (allVisibleSelected) {
-      // Deselect all visible repos
-      onRepoChange(selectedRepos.filter(name => !visibleRepoNames.includes(name)));
+      onRepoChange(
+        selectedRepos.filter((name) => !visibleRepoNames.includes(name))
+      );
     } else {
-      // Select all visible repos (merge with existing selection)
-      const newSelection = [...new Set([...selectedRepos, ...visibleRepoNames])];
+      const newSelection = [
+        ...new Set([...selectedRepos, ...visibleRepoNames]),
+      ];
       onRepoChange(newSelection);
     }
   };
@@ -79,24 +161,24 @@ export function RepositorySelector({ selectedRepos, onRepoChange, availableRepos
                 Clear All
               </Button>
             )}
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleSelectAll}
-            >
+            <Button variant="outline" size="sm" onClick={handleSelectAll}>
               <Check className="h-4 w-4 mr-1" />
-              {filteredRepos.every(repo => selectedRepos.includes(repo.name)) ? 'Deselect Visible' : 'Select Visible'}
+              {displayedRepos.every((repo) =>
+                selectedRepos.includes(repo.name)
+              )
+                ? 'Deselect Visible'
+                : 'Select Visible'}
             </Button>
           </div>
         </div>
       </CardHeader>
-      
+
       <CardContent className="space-y-4">
         {/* Search input */}
         <div className="relative">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
-            placeholder="Search repositories..."
+            placeholder="Search all repositories..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="pl-9"
@@ -112,79 +194,92 @@ export function RepositorySelector({ selectedRepos, onRepoChange, availableRepos
             </Button>
           )}
         </div>
-        
-        {/* Organization access warning */}
-        {deniedOrgs.length > 0 && (
-          <div className="rounded-lg border border-orange-200 bg-orange-50 p-4 dark:border-orange-900/50 dark:bg-orange-900/10">
-            <div className="flex items-start gap-3">
-              <AlertTriangle className="h-5 w-5 text-orange-600 dark:text-orange-400 flex-shrink-0 mt-0.5" />
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-orange-800 dark:text-orange-200">
-                  Organization access not granted
-                </p>
-                <p className="text-sm text-orange-700 dark:text-orange-300 mt-1">
-                  The following organization{deniedOrgs.length > 1 ? 's have' : ' has'} not granted access to this app:{' '}
-                  <span className="font-medium">{deniedOrgs.join(', ')}</span>
-                </p>
-                <p className="text-xs text-orange-600 dark:text-orange-400 mt-2">
-                  An organization admin needs to approve this app at{' '}
-                  <code className="bg-orange-100 dark:bg-orange-900/30 px-1 rounded">
-                    github.com/organizations/[org]/settings/oauth_application_policy
-                  </code>
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
 
         {/* Repository list */}
         <div className="max-h-96 overflow-y-auto space-y-2">
-          {filteredRepos.length === 0 ? (
+          {isSearching ? (
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+              <span className="ml-2 text-sm text-muted-foreground">
+                Searching...
+              </span>
+            </div>
+          ) : displayedRepos.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-center">
               <GitBranch className="h-12 w-12 text-muted-foreground/40 mb-4" />
-              <h3 className="font-medium text-lg mb-2">No repositories found</h3>
+              <h3 className="font-medium text-lg mb-2">
+                No repositories found
+              </h3>
               <p className="text-sm text-muted-foreground max-w-sm">
                 {searchQuery ? (
-                  <>No repositories match &quot;{searchQuery}&quot;. Try a different search term.</>
+                  <>
+                    No repositories match &quot;{searchQuery}&quot;. Try a
+                    different search term.
+                  </>
                 ) : (
-                  'No repositories available. Please install the GitHub App on your repositories.'
+                  'No repositories available.'
                 )}
               </p>
             </div>
           ) : (
-            filteredRepos.map((repo) => {
-              const isSelected = selectedRepos.includes(repo.name);
-              return (
-                <div
-                  key={repo.name}
-                  className={cn(
-                    "flex items-center space-x-3 rounded-lg border p-4 transition-colors cursor-pointer",
-                    isSelected 
-                      ? "bg-primary/5 border-primary/20 hover:bg-primary/10" 
-                      : "hover:bg-muted/50"
-                  )}
-                  onClick={() => handleRepoToggle(repo.name)}
-                >
-                  <Checkbox
-                    checked={isSelected}
-                    onCheckedChange={() => handleRepoToggle(repo.name)}
-                  />
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <GitBranch className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-                      <span className="font-medium truncate">{repo.displayName}</span>
+            <>
+              {displayedRepos.map((repo) => {
+                const isSelected = selectedRepos.includes(repo.name);
+                return (
+                  <div
+                    key={repo.displayName}
+                    className={cn(
+                      'flex items-center space-x-3 rounded-lg border p-4 transition-colors cursor-pointer',
+                      isSelected
+                        ? 'bg-primary/5 border-primary/20 hover:bg-primary/10'
+                        : 'hover:bg-muted/50'
+                    )}
+                    onClick={() => handleRepoToggle(repo.name)}
+                  >
+                    <Checkbox
+                      checked={isSelected}
+                      onCheckedChange={() => handleRepoToggle(repo.name)}
+                    />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <GitBranch className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                        <span className="font-medium truncate">
+                          {repo.displayName}
+                        </span>
+                      </div>
+                      <p className="text-sm text-muted-foreground font-mono mt-1">
+                        {repo.owner}/{repo.name}
+                      </p>
                     </div>
-                    <p className="text-sm text-muted-foreground font-mono mt-1">
-                      {repo.owner}/{repo.name}
-                    </p>
                   </div>
+                );
+              })}
+
+              {/* Load More button */}
+              {displayedHasMore && (
+                <div className="pt-2 flex justify-center">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleLoadMore}
+                    disabled={isLoadingMore}
+                  >
+                    {isLoadingMore ? (
+                      <>
+                        <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                        Loading...
+                      </>
+                    ) : (
+                      'Load More'
+                    )}
+                  </Button>
                 </div>
-              );
-            })
+              )}
+            </>
           )}
         </div>
-        
-        {selectedRepos.length === 0 && filteredRepos.length > 0 && (
+
+        {selectedRepos.length === 0 && displayedRepos.length > 0 && (
           <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 dark:border-amber-900/50 dark:bg-amber-900/10">
             <div className="flex items-center gap-2">
               <div className="h-4 w-4 rounded-full bg-amber-500 flex-shrink-0" />
