@@ -82,7 +82,7 @@ export function Leaderboard({ data, isLoading, hasSelectedRepos = true }: Leader
   }) => {
     if (total === 0) return null;
 
-    const tools = (['claude-coauthor', 'claude-generated', 'copilot'] as const).filter(
+    const tools = (['claude-coauthor', 'claude-generated', 'copilot', 'cursor'] as const).filter(
       tool => toolBreakdown[tool] > 0
     );
 
@@ -237,11 +237,14 @@ export function Leaderboard({ data, isLoading, hasSelectedRepos = true }: Leader
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
-        {data.map((entry) => (
+        {data.map((entry) => {
+          const isNonAIUser = entry.commits === 0;
+          return (
           <Collapsible key={entry.username}>
             <div className={cn(
               "rounded-lg border transition-all duration-200 hover:shadow-md",
-              entry.rank <= 3 ? "bg-gradient-to-r from-primary/5 to-transparent" : ""
+              entry.rank <= 3 && !isNonAIUser ? "bg-gradient-to-r from-primary/5 to-transparent" : "",
+              isNonAIUser ? "opacity-50" : ""
             )}>
               <CollapsibleTrigger asChild>
                 <Button
@@ -270,25 +273,34 @@ export function Leaderboard({ data, isLoading, hasSelectedRepos = true }: Leader
                           )}
                         </div>
                         <div className="flex items-center gap-4 text-sm text-muted-foreground">
-                          <span className="flex items-center gap-1">
-                            <Zap className="h-3 w-3" />
-                            {entry.commits} AI commits
-                          </span>
-                          <AIToolBreakdownBar
-                            toolBreakdown={entry.aiToolBreakdown}
-                            modelBreakdown={entry.claudeModelBreakdown}
-                            total={entry.commits}
-                          />
-                          <span className="flex items-center gap-1">
-                            <GitCommit className="h-3 w-3" />
-                            {entry.totalCommits} total
-                          </span>
+                          {isNonAIUser ? (
+                            <span className="flex items-center gap-1">
+                              <GitCommit className="h-3 w-3" />
+                              {entry.totalCommits} total commits
+                            </span>
+                          ) : (
+                            <>
+                              <span className="flex items-center gap-1">
+                                <Zap className="h-3 w-3" />
+                                {entry.commits} AI commits
+                              </span>
+                              <AIToolBreakdownBar
+                                toolBreakdown={entry.aiToolBreakdown}
+                                modelBreakdown={entry.claudeModelBreakdown}
+                                total={entry.commits}
+                              />
+                              <span className="flex items-center gap-1">
+                                <GitCommit className="h-3 w-3" />
+                                {entry.totalCommits} total
+                              </span>
+                            </>
+                          )}
                         </div>
                       </div>
                     </div>
                     <div className="flex items-center space-x-3">
                       <div className="text-right">
-                        <div className="text-2xl font-bold text-primary">
+                        <div className={cn("text-2xl font-bold", isNonAIUser ? "text-muted-foreground" : "text-primary")}>
                           {entry.aiPercentage}%
                         </div>
                         <div className="text-xs text-muted-foreground">adoption rate</div>
@@ -352,7 +364,8 @@ export function Leaderboard({ data, isLoading, hasSelectedRepos = true }: Leader
               </CollapsibleContent>
             </div>
           </Collapsible>
-        ))}
+          );
+        })}
       </CardContent>
     </Card>
   );

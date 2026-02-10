@@ -6,7 +6,7 @@
  */
 
 // Re-export types from the original github.ts
-export type AITool = 'claude-coauthor' | 'claude-generated' | 'copilot';
+export type AITool = 'claude-coauthor' | 'claude-generated' | 'copilot' | 'cursor';
 export type ClaudeModel = 'opus' | 'sonnet' | 'haiku' | 'unknown';
 
 export interface AIToolInfo {
@@ -40,6 +40,12 @@ export const AI_TOOLS: Record<AITool, AIToolInfo> = {
     label: 'GitHub Copilot',
     description: 'Co-authored by GitHub Copilot',
     color: 'bg-blue-500',
+  },
+  'cursor': {
+    id: 'cursor',
+    label: 'Cursor',
+    description: 'Co-authored by Cursor AI',
+    color: 'bg-cyan-500',
   },
 };
 
@@ -83,6 +89,7 @@ export interface AIToolBreakdown {
   'claude-coauthor': number;
   'claude-generated': number;
   'copilot': number;
+  'cursor': number;
 }
 
 interface CommitDetail {
@@ -136,6 +143,7 @@ const emptyToolBreakdown = (): AIToolBreakdown => ({
   'claude-coauthor': 0,
   'claude-generated': 0,
   'copilot': 0,
+  'cursor': 0,
 });
 
 const emptyModelBreakdown = (): ClaudeModelBreakdown => ({
@@ -192,6 +200,12 @@ function detectAITool(message: string): { aiTool: AITool; claudeModel?: ClaudeMo
   const copilotCoAuthorRegex = /co-authored-by:\s*copilot\s*</i;
   if (copilotCoAuthorRegex.test(message)) {
     return { aiTool: 'copilot' };
+  }
+
+  // 4. Cursor AI Co-author pattern
+  const cursorCoAuthorRegex = /co-authored-by:\s*cursor\s*<[^>]*@cursor\.com>/i;
+  if (cursorCoAuthorRegex.test(message)) {
+    return { aiTool: 'cursor' };
   }
 
   return null;
@@ -354,24 +368,39 @@ export async function fetchCommitDataClient(
     }
   });
 
-  // Create leaderboard
-  const leaderboard = Array.from(userCommits.entries())
-    .map(([username, data]) => {
-      const totalCommits = userTotalCommits.get(username) || 0;
-      const aiPercentage = totalCommits > 0 ? Math.round((data.count / totalCommits) * 100) : 0;
+  // Build avatar lookup from all commits
+  const userAvatars = new Map<string, string>();
+  allCommits.forEach(commit => {
+    if (commit.author?.login && commit.author.avatar_url && !userAvatars.has(commit.author.login)) {
+      userAvatars.set(commit.author.login, commit.author.avatar_url);
+    }
+  });
+
+  // Create leaderboard from ALL users (not just AI users)
+  const leaderboard = Array.from(userTotalCommits.entries())
+    .map(([username, totalCommits]) => {
+      const aiData = userCommits.get(username);
+      const avatar = aiData?.avatar || userAvatars.get(username) || '';
+      const aiCount = aiData?.count || 0;
+      const aiPercentage = totalCommits > 0 ? Math.round((aiCount / totalCommits) * 100) : 0;
 
       return {
         username,
-        commits: data.count,
+        commits: aiCount,
         totalCommits,
         aiPercentage,
-        avatar: data.avatar,
-        commitDetails: data.commits,
-        aiToolBreakdown: data.aiToolBreakdown,
-        claudeModelBreakdown: data.claudeModelBreakdown
+        avatar,
+        commitDetails: aiData?.commits || [],
+        aiToolBreakdown: aiData?.aiToolBreakdown || emptyToolBreakdown(),
+        claudeModelBreakdown: aiData?.claudeModelBreakdown || emptyModelBreakdown(),
       };
     })
-    .sort((a, b) => b.commits - a.commits)
+    .sort((a, b) => {
+      // Primary: AI commits descending (AI users first)
+      if (b.commits !== a.commits) return b.commits - a.commits;
+      // Secondary: total commits descending
+      return b.totalCommits - a.totalCommits;
+    })
     .map((entry, index) => ({
       rank: index + 1,
       ...entry
@@ -382,7 +411,7 @@ export async function fetchCommitDataClient(
     aiCommits: aiCommitsWithTool.length,
     aiToolBreakdown: globalToolBreakdown,
     claudeModelBreakdown: globalModelBreakdown,
-    activeUsers: userCommits.size,
+    activeUsers: userTotalCommits.size,
     leaderboard
   };
 }

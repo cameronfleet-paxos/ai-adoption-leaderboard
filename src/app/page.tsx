@@ -44,6 +44,7 @@ function HomeContent() {
     'claude-coauthor': 0,
     'claude-generated': 0,
     'copilot': 0,
+    'cursor': 0,
   }), []);
 
   const emptyModelBreakdown = useMemo<ClaudeModelBreakdown>(() => ({
