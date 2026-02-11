@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { ChevronDown, ChevronRight, ExternalLink, Trophy, Medal, Award, Zap, Calendar, GitCommit } from 'lucide-react';
+import { useState, useMemo } from 'react';
+import { ChevronDown, ChevronRight, ExternalLink, Trophy, Medal, Award, Zap, Calendar, GitCommit, ArrowUp, ArrowDown, BarChart3 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -8,6 +8,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { AI_TOOLS, CLAUDE_MODELS, type AITool, type AIToolBreakdown, type ClaudeModel, type ClaudeModelBreakdown } from '@/lib/github-client';
+import { UserDetailSheet } from '@/components/UserDetailSheet';
 
 interface CommitDetail {
   sha: string;
@@ -27,6 +28,7 @@ interface LeaderboardEntry {
   aiPercentage: number;
   avatar: string;
   commitDetails: CommitDetail[];
+  allCommitDates: string[];
   aiToolBreakdown: AIToolBreakdown;
   claudeModelBreakdown: ClaudeModelBreakdown;
 }
@@ -37,9 +39,32 @@ interface LeaderboardProps {
   hasSelectedRepos?: boolean;
 }
 
+type SortField = 'commits' | 'aiPercentage';
+type SortDirection = 'asc' | 'desc';
+
 export function Leaderboard({ data, isLoading, hasSelectedRepos = true }: LeaderboardProps) {
   const [expandedUser, setExpandedUser] = useState<string | null>(null);
-  
+  const [sortField, setSortField] = useState<SortField>('commits');
+  const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
+  const [detailUser, setDetailUser] = useState<LeaderboardEntry | null>(null);
+
+  const sortedData = useMemo(() => {
+    const sorted = [...data].sort((a, b) => {
+      const multiplier = sortDirection === 'desc' ? -1 : 1;
+      return (a[sortField] - b[sortField]) * multiplier;
+    });
+    return sorted.map((entry, i) => ({ ...entry, rank: i + 1 }));
+  }, [data, sortField, sortDirection]);
+
+  const handleSortClick = (field: SortField) => {
+    if (field === sortField) {
+      setSortDirection(d => d === 'desc' ? 'asc' : 'desc');
+    } else {
+      setSortField(field);
+      setSortDirection('desc');
+    }
+  };
+
   const toggleUser = (username: string) => {
     setExpandedUser(expandedUser === username ? null : username);
   };
@@ -228,16 +253,49 @@ export function Leaderboard({ data, isLoading, hasSelectedRepos = true }: Leader
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Trophy className="h-5 w-5" />
-          AI Adoption Leaderboard
-          <Badge variant="secondary" className="ml-auto">
-            {data.length} {data.length === 1 ? 'developer' : 'developers'}
-          </Badge>
-        </CardTitle>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <CardTitle className="flex items-center gap-2">
+            <Trophy className="h-5 w-5" />
+            AI Adoption Leaderboard
+            <Badge variant="secondary">
+              {data.length} {data.length === 1 ? 'developer' : 'developers'}
+            </Badge>
+          </CardTitle>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground mr-1">Sort by:</span>
+            <Button
+              variant={sortField === 'commits' ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => handleSortClick('commits')}
+              className="text-xs"
+            >
+              <Zap className="h-3 w-3 mr-1" />
+              AI Commits
+              {sortField === 'commits' && (
+                sortDirection === 'desc'
+                  ? <ArrowDown className="h-3 w-3 ml-1" />
+                  : <ArrowUp className="h-3 w-3 ml-1" />
+              )}
+            </Button>
+            <Button
+              variant={sortField === 'aiPercentage' ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => handleSortClick('aiPercentage')}
+              className="text-xs"
+            >
+              <BarChart3 className="h-3 w-3 mr-1" />
+              Adoption %
+              {sortField === 'aiPercentage' && (
+                sortDirection === 'desc'
+                  ? <ArrowDown className="h-3 w-3 ml-1" />
+                  : <ArrowUp className="h-3 w-3 ml-1" />
+              )}
+            </Button>
+          </div>
+        </div>
       </CardHeader>
       <CardContent className="space-y-3">
-        {data.map((entry) => {
+        {sortedData.map((entry) => {
           const isNonAIUser = entry.commits === 0;
           return (
           <Collapsible key={entry.username}>
@@ -358,6 +416,15 @@ export function Leaderboard({ data, isLoading, hasSelectedRepos = true }: Leader
                           <p className="text-sm text-muted-foreground">No commit details available</p>
                         )}
                       </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="mt-4 w-full"
+                        onClick={() => setDetailUser(entry)}
+                      >
+                        <BarChart3 className="h-3.5 w-3.5 mr-2" />
+                        View Detailed Stats
+                      </Button>
                     </div>
                   </div>
                 )}
@@ -367,6 +434,11 @@ export function Leaderboard({ data, isLoading, hasSelectedRepos = true }: Leader
           );
         })}
       </CardContent>
+      <UserDetailSheet
+        user={detailUser}
+        open={detailUser !== null}
+        onOpenChange={(open) => { if (!open) setDetailUser(null); }}
+      />
     </Card>
   );
 }

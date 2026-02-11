@@ -110,6 +110,7 @@ export interface LeaderboardEntry {
   aiPercentage: number;
   avatar: string;
   commitDetails: CommitDetail[];
+  allCommitDates: string[];
   aiToolBreakdown: AIToolBreakdown;
   claudeModelBreakdown: ClaudeModelBreakdown;
 }
@@ -307,12 +308,16 @@ export async function fetchCommitDataClient(
     }
   });
 
-  // Count total commits by user
+  // Count total commits by user and collect all commit dates
   const userTotalCommits = new Map<string, number>();
+  const userAllCommitDates = new Map<string, string[]>();
   allCommits.forEach(commit => {
     if (commit.author?.login) {
       const username = commit.author.login;
       userTotalCommits.set(username, (userTotalCommits.get(username) || 0) + 1);
+      const dates = userAllCommitDates.get(username) || [];
+      dates.push(commit.commit.author.date);
+      userAllCommitDates.set(username, dates);
     }
   });
 
@@ -391,6 +396,7 @@ export async function fetchCommitDataClient(
         aiPercentage,
         avatar,
         commitDetails: aiData?.commits || [],
+        allCommitDates: userAllCommitDates.get(username) || [],
         aiToolBreakdown: aiData?.aiToolBreakdown || emptyToolBreakdown(),
         claudeModelBreakdown: aiData?.claudeModelBreakdown || emptyModelBreakdown(),
       };

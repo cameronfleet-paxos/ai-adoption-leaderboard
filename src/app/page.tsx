@@ -76,6 +76,7 @@ function HomeContent() {
         aiTool: AITool;
         claudeModel?: ClaudeModel;
       }>;
+      allCommitDates: string[];
       aiToolBreakdown: AIToolBreakdown;
       claudeModelBreakdown: ClaudeModelBreakdown;
     }>
