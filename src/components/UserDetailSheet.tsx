@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import { ExternalLink, Trophy, Medal, Award, Zap, Calendar, GitCommit, BarChart3 } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer } from 'recharts';
 import { Badge } from '@/components/ui/badge';
@@ -40,7 +40,16 @@ interface UserDetailSheetProps {
   onOpenChange: (open: boolean) => void;
 }
 
+const COMMITS_PER_PAGE = 20;
+
 export function UserDetailSheet({ user, open, onOpenChange }: UserDetailSheetProps) {
+  const [visibleCount, setVisibleCount] = useState(COMMITS_PER_PAGE);
+
+  // Reset visible count when user changes
+  useEffect(() => {
+    setVisibleCount(COMMITS_PER_PAGE);
+  }, [user?.username]);
+
   // Build daily commit chart data with both AI and total commits
   const chartData = useMemo(() => {
     if (!user || user.commitDetails.length === 0) return [];
@@ -309,38 +318,54 @@ export function UserDetailSheet({ user, open, onOpenChange }: UserDetailSheetPro
           <h4 className="text-sm font-semibold mb-3 flex items-center gap-2">
             <GitCommit className="h-4 w-4" />
             All AI Commits ({user.commitDetails.length})
+            {user.commitDetails.length > visibleCount && (
+              <span className="text-xs font-normal text-muted-foreground">
+                showing {visibleCount} of {user.commitDetails.length}
+              </span>
+            )}
           </h4>
-          <div className="space-y-2 max-h-96 overflow-y-auto">
+          <div className="space-y-2">
             {user.commitDetails.length > 0 ? (
-              user.commitDetails.map((commit) => (
-                <div key={commit.sha} className="group flex items-start space-x-3 p-3 rounded-lg border bg-muted/30 hover:bg-muted/50 transition-colors">
-                  <div className="w-2 h-2 bg-primary rounded-full mt-2 flex-shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <p className="font-medium text-sm leading-relaxed mb-2">
-                      {commit.message}
-                    </p>
-                    <div className="flex items-center flex-wrap gap-2 text-xs text-muted-foreground">
-                      {getAIToolBadge(commit.aiTool, commit.claudeModel)}
-                      <Badge variant="outline" className="text-xs">
-                        {commit.repository}
-                      </Badge>
-                      <span className="flex items-center gap-1">
-                        <Calendar className="h-3 w-3" />
-                        {new Date(commit.date).toLocaleDateString()}
-                      </span>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-auto p-0 text-xs text-primary hover:text-primary/80 opacity-0 group-hover:opacity-100 transition-opacity"
-                        onClick={() => window.open(commit.url, '_blank')}
-                      >
-                        <ExternalLink className="h-3 w-3 mr-1" />
-                        View
-                      </Button>
+              <>
+                {user.commitDetails.slice(0, visibleCount).map((commit) => (
+                  <div key={commit.sha} className="group flex items-start space-x-3 p-3 rounded-lg border bg-muted/30 hover:bg-muted/50 transition-colors">
+                    <div className="w-2 h-2 bg-primary rounded-full mt-2 flex-shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium text-sm leading-relaxed mb-2">
+                        {commit.message}
+                      </p>
+                      <div className="flex items-center flex-wrap gap-2 text-xs text-muted-foreground">
+                        {getAIToolBadge(commit.aiTool, commit.claudeModel)}
+                        <Badge variant="outline" className="text-xs">
+                          {commit.repository}
+                        </Badge>
+                        <span className="flex items-center gap-1">
+                          <Calendar className="h-3 w-3" />
+                          {new Date(commit.date).toLocaleDateString()}
+                        </span>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-auto p-0 text-xs text-primary hover:text-primary/80 opacity-0 group-hover:opacity-100 transition-opacity"
+                          onClick={() => window.open(commit.url, '_blank')}
+                        >
+                          <ExternalLink className="h-3 w-3 mr-1" />
+                          View
+                        </Button>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))
+                ))}
+                {visibleCount < user.commitDetails.length && (
+                  <Button
+                    variant="outline"
+                    className="w-full"
+                    onClick={() => setVisibleCount(prev => prev + COMMITS_PER_PAGE)}
+                  >
+                    Show More ({user.commitDetails.length - visibleCount} remaining)
+                  </Button>
+                )}
+              </>
             ) : (
               <p className="text-sm text-muted-foreground text-center py-4">No AI commits found</p>
             )}
