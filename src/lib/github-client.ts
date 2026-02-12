@@ -92,6 +92,15 @@ export interface AIToolBreakdown {
   'cursor': number;
 }
 
+export interface FetchProgress {
+  completedRepos: number;
+  totalRepos: number;
+  activeRepos: string[];    // names of repos currently being fetched (up to 3)
+  commitsFetched: number;   // running total across all repos
+  totalCommitsEstimate: number | null; // total across all repos, null if unknown
+  phase: 'counting' | 'fetching' | 'analyzing';
+}
+
 interface CommitDetail {
   sha: string;
   message: string;
@@ -213,13 +222,32 @@ function detectAITool(message: string): { aiTool: AITool; claudeModel?: ClaudeMo
 }
 
 /**
+ * Run async tasks with a concurrency limit using a worker pool pattern.
+ * Workers pull from a shared queue so fast repos don't block slow ones.
+ */
+async function runWithConcurrency<T>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T, index: number) => Promise<void>
+): Promise<void> {
+  let nextIndex = 0;
+  const workerLoop = async () => {
+    while (nextIndex < items.length) {
+      const i = nextIndex++;
+      await worker(items[i], i);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, () => workerLoop()));
+}
+
+/**
  * Fetch commit data from GitHub API (client-side)
  */
 export async function fetchCommitDataClient(
   token: string,
   repositories: Repository[],
   dateRange?: { start: Date; end: Date },
-  onProgress?: (message: string) => void
+  onProgress?: (progress: FetchProgress) => void
 ): Promise<LeaderboardData> {
   let startDate: Date;
   let endDate: Date;
@@ -251,45 +279,108 @@ export async function fetchCommitDataClient(
 
   const allCommits: (GitHubCommit & { repository: string })[] = [];
 
-  // Fetch commits from all repositories
-  for (const repository of repositories) {
-    onProgress?.(`Fetching commits from ${repository.displayName}...`);
+  // Phase 1: Count total commits across all repos (1 lightweight request per repo)
+  let totalCommitsEstimate: number | null = null;
 
-    let page = 1;
-    let hasMore = true;
+  onProgress?.({
+    completedRepos: 0,
+    totalRepos: repositories.length,
+    activeRepos: [],
+    commitsFetched: 0,
+    totalCommitsEstimate: null,
+    phase: 'counting',
+  });
 
-    while (hasMore) {
-      const url = `https://api.github.com/repos/${repository.owner}/${repository.name}/commits?since=${startDate.toISOString()}&until=${endDate.toISOString()}&per_page=100&page=${page}`;
-
-      const response = await fetch(url, { headers });
-
-      if (!response.ok) {
-        console.error(`GitHub API error for ${repository.name}:`, response.status);
-        break;
-      }
-
-      const commits: GitHubCommit[] = await response.json();
-
-      const commitsWithRepo = commits.map(commit => ({
-        ...commit,
-        repository: repository.displayName
-      }));
-
-      allCommits.push(...commitsWithRepo);
-
-      // Check for more pages
-      const linkHeader = response.headers.get('link');
-      hasMore = linkHeader ? linkHeader.includes('rel="next"') : false;
-      page++;
-
-      // Safety limit
-      if (page > 100) {
-        break;
-      }
-    }
+  try {
+    const counts = await Promise.all(
+      repositories.map(async (repo) => {
+        const url = `https://api.github.com/repos/${repo.owner}/${repo.name}/commits?since=${startDate.toISOString()}&until=${endDate.toISOString()}&per_page=1`;
+        const response = await fetch(url, { headers });
+        if (!response.ok) return 0;
+        const linkHeader = response.headers.get('link');
+        if (!linkHeader) {
+          // No link header means 0 or 1 commits
+          const body = await response.json();
+          return Array.isArray(body) ? body.length : 0;
+        }
+        const match = linkHeader.match(/page=(\d+)>;\s*rel="last"/);
+        return match ? parseInt(match[1], 10) : 1;
+      })
+    );
+    totalCommitsEstimate = counts.reduce((sum, c) => sum + c, 0);
+  } catch (err) {
+    console.error('Failed to count commits:', err);
+    // Continue without estimate
   }
 
-  onProgress?.('Analyzing commits for AI assistance...');
+  // Phase 2: Fetch commits from all repositories (3 concurrent workers)
+  const activeRepoNames = new Set<string>();
+  let completedRepos = 0;
+
+  const emitFetchProgress = () => {
+    onProgress?.({
+      completedRepos,
+      totalRepos: repositories.length,
+      activeRepos: Array.from(activeRepoNames),
+      commitsFetched: allCommits.length,
+      totalCommitsEstimate,
+      phase: 'fetching',
+    });
+  };
+
+  await runWithConcurrency(repositories, 3, async (repository) => {
+    activeRepoNames.add(repository.displayName);
+    emitFetchProgress();
+
+    try {
+      let page = 1;
+      let hasMore = true;
+
+      while (hasMore) {
+        const url = `https://api.github.com/repos/${repository.owner}/${repository.name}/commits?since=${startDate.toISOString()}&until=${endDate.toISOString()}&per_page=100&page=${page}`;
+
+        const response = await fetch(url, { headers });
+
+        if (!response.ok) {
+          console.error(`GitHub API error for ${repository.name}:`, response.status);
+          break;
+        }
+
+        const commits: GitHubCommit[] = await response.json();
+
+        const commitsWithRepo = commits.map(commit => ({
+          ...commit,
+          repository: repository.displayName
+        }));
+
+        allCommits.push(...commitsWithRepo);
+        emitFetchProgress();
+
+        const linkHeader = response.headers.get('link');
+        hasMore = linkHeader ? linkHeader.includes('rel="next"') : false;
+        page++;
+
+        if (page > 500) {
+          break;
+        }
+      }
+    } catch (err) {
+      console.error(`Failed to fetch commits for ${repository.name}:`, err);
+    }
+
+    activeRepoNames.delete(repository.displayName);
+    completedRepos++;
+    emitFetchProgress();
+  });
+
+  onProgress?.({
+    completedRepos: repositories.length,
+    totalRepos: repositories.length,
+    activeRepos: [],
+    commitsFetched: allCommits.length,
+    totalCommitsEstimate,
+    phase: 'analyzing',
+  });
 
   // Process commits
   const aiCommitsWithTool: { commit: typeof allCommits[0]; aiTool: AITool; claudeModel?: ClaudeModel }[] = [];

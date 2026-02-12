@@ -15,6 +15,7 @@ import {
   type AITool,
   type ClaudeModelBreakdown,
   type ClaudeModel,
+  type FetchProgress,
   fetchCommitDataClient,
 } from '@/lib/github-client';
 
@@ -28,7 +29,7 @@ function HomeContent() {
   const [isLoading, setIsLoading] = useState(false);
   const [isInitializing, setIsInitializing] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [progressMessage, setProgressMessage] = useState<string | null>(null);
+  const [progress, setProgress] = useState<FetchProgress | null>(null);
 
   // Auth state
   const [token, setToken] = useState<string | null>(null);
@@ -216,11 +217,11 @@ function HomeContent() {
           start: new Date(dateRange.startDate),
           end: new Date(dateRange.endDate)
         },
-        setProgressMessage
+        setProgress
       );
 
       setData(result);
-      setProgressMessage(null);
+      setProgress(null);
     } catch (err) {
       console.error('Error fetching data:', err);
       setError(err instanceof Error ? err.message : 'Failed to fetch commit data');
@@ -324,14 +325,6 @@ function HomeContent() {
         />
 
 
-        <DateRangeSelector
-          startDate={dateRange.startDate}
-          endDate={dateRange.endDate}
-          onDateChange={handleDateChange}
-          onRefresh={fetchData}
-          isLoading={isLoading}
-        />
-
         <RepositorySelector
           selectedRepos={selectedRepos}
           onRepoChange={handleRepoChange}
@@ -343,34 +336,107 @@ function HomeContent() {
           }}
         />
 
+        <DateRangeSelector
+          startDate={dateRange.startDate}
+          endDate={dateRange.endDate}
+          onDateChange={handleDateChange}
+          onRefresh={fetchData}
+          isLoading={isLoading}
+        />
+
         {error && (
           <div className="mb-6 p-4 bg-destructive/10 border border-destructive/20 rounded-lg text-destructive">
             {error}
           </div>
         )}
 
-        {progressMessage && (
-          <div className="mb-6 p-4 bg-primary/10 border border-primary/20 rounded-lg text-primary flex items-center gap-2">
-            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary"></div>
-            {progressMessage}
+        {progress ? (
+          <div className="flex flex-col items-center justify-center py-16">
+            <div className="w-full max-w-md space-y-6">
+              {/* Big commit counter */}
+              <div className="text-center">
+                {progress.phase === 'counting' ? (
+                  <>
+                    <div className="text-5xl font-bold tracking-tight tabular-nums text-muted-foreground/50">...</div>
+                    <div className="text-sm text-muted-foreground mt-1">
+                      Counting commits across {progress.totalRepos} {progress.totalRepos === 1 ? 'repo' : 'repos'}
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="text-5xl font-bold tracking-tight tabular-nums">
+                      {progress.commitsFetched.toLocaleString()}
+                      {progress.totalCommitsEstimate != null && progress.phase === 'fetching' && (
+                        <span className="text-2xl font-normal text-muted-foreground">
+                          {' / '}{progress.totalCommitsEstimate.toLocaleString()}
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-sm text-muted-foreground mt-1">
+                      {progress.phase === 'analyzing' ? 'commits being analyzed' : 'commits fetched'}
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {/* Progress bar */}
+              <div className="space-y-2">
+                <div className="h-2 bg-muted rounded-full overflow-hidden">
+                  {progress.phase === 'counting' || progress.phase === 'analyzing' ? (
+                    <div className="h-full w-full progress-bar-shimmer rounded-full" />
+                  ) : progress.totalCommitsEstimate != null && progress.totalCommitsEstimate > 0 ? (
+                    <div
+                      className="h-full progress-bar-shimmer rounded-full transition-all duration-300 ease-out"
+                      style={{ width: `${Math.max(2, (progress.commitsFetched / progress.totalCommitsEstimate) * 100)}%` }}
+                    />
+                  ) : (
+                    <div className="h-full w-full progress-bar-shimmer rounded-full" />
+                  )}
+                </div>
+
+                {/* Status text */}
+                <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
+                  <div className="h-1.5 w-1.5 rounded-full bg-primary pulse-glow" />
+                  {progress.phase === 'counting' ? (
+                    <span>Preparing...</span>
+                  ) : progress.phase === 'analyzing' ? (
+                    <span>Scanning for AI-assisted commits...</span>
+                  ) : (
+                    <span>
+                      Fetching from {progress.activeRepos.map((name, i) => (
+                        <span key={name}>
+                          {i > 0 && ', '}
+                          <span className="font-medium text-foreground">{name}</span>
+                        </span>
+                      ))}
+                      {progress.totalRepos > 1 && (
+                        <span className="text-muted-foreground"> ({progress.completedRepos}/{progress.totalRepos} done)</span>
+                      )}
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
           </div>
+        ) : (
+          <>
+            <StatsCards
+              totalCommits={data.totalCommits}
+              aiCommits={data.aiCommits}
+              aiToolBreakdown={data.aiToolBreakdown}
+              claudeModelBreakdown={data.claudeModelBreakdown}
+              activeUsers={data.activeUsers}
+              isLoading={isLoading}
+              hasSelectedRepos={selectedRepos.length > 0}
+            />
+
+            <Leaderboard
+              data={data.leaderboard}
+              isLoading={isLoading}
+              hasSelectedRepos={selectedRepos.length > 0}
+            />
+          </>
         )}
-
-        <StatsCards
-          totalCommits={data.totalCommits}
-          aiCommits={data.aiCommits}
-          aiToolBreakdown={data.aiToolBreakdown}
-          claudeModelBreakdown={data.claudeModelBreakdown}
-          activeUsers={data.activeUsers}
-          isLoading={isLoading}
-          hasSelectedRepos={selectedRepos.length > 0}
-        />
-
-        <Leaderboard
-          data={data.leaderboard}
-          isLoading={isLoading}
-          hasSelectedRepos={selectedRepos.length > 0}
-        />
       </div>
     </div>
   );
