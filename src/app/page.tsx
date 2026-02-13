@@ -4,6 +4,8 @@ import { useState, useEffect, useCallback, useMemo, Suspense } from 'react';
 import { useSearchParams, useRouter, usePathname } from 'next/navigation';
 import { Leaderboard } from '@/components/Leaderboard';
 import { StatsCards } from '@/components/StatsCards';
+import { OverallActivityChart } from '@/components/OverallActivityChart';
+import { AnalyticsSection } from '@/components/AnalyticsSection';
 import { Header } from '@/components/Header';
 import { DateRangeSelector } from '@/components/DateRangeSelector';
 import { RepositorySelector } from '@/components/RepositorySelector';
@@ -429,6 +431,26 @@ function HomeContent() {
               isLoading={isLoading}
               hasSelectedRepos={selectedRepos.length > 0}
             />
+
+            <OverallActivityChart
+              leaderboard={data.leaderboard}
+              isLoading={isLoading}
+              hasSelectedRepos={selectedRepos.length > 0}
+            />
+
+            <AnalyticsSection
+              aiToolBreakdown={data.aiToolBreakdown}
+              totalAICommits={data.aiCommits}
+              leaderboard={data.leaderboard}
+              isLoading={isLoading}
+              hasSelectedRepos={selectedRepos.length > 0}
+            />
+
+            <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 dark:border-amber-900/50 dark:bg-amber-900/10">
+              <p className="text-sm text-amber-800 dark:text-amber-200">
+                <span className="font-medium">Note:</span> Codex does not automatically add co-author metadata to commits, so AI-assisted commits from Codex users will not be detected here. This is a known gap.
+              </p>
+            </div>
 
             <Leaderboard
               data={data.leaderboard}
