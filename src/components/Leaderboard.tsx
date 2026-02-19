@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { ChevronDown, ChevronRight, ExternalLink, Trophy, Medal, Award, Zap, Calendar, GitCommit, ArrowUp, ArrowDown, BarChart3 } from 'lucide-react';
+import { ChevronDown, ChevronRight, ExternalLink, Trophy, Medal, Award, Zap, Calendar, GitCommit, ArrowUp, ArrowDown, BarChart3, Filter } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -42,19 +42,47 @@ interface LeaderboardProps {
 type SortField = 'commits' | 'aiPercentage';
 type SortDirection = 'asc' | 'desc';
 
+type ToolFilter = 'all' | AITool;
+
 export function Leaderboard({ data, isLoading, hasSelectedRepos = true }: LeaderboardProps) {
   const [expandedUser, setExpandedUser] = useState<string | null>(null);
   const [sortField, setSortField] = useState<SortField>('commits');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
   const [detailUser, setDetailUser] = useState<LeaderboardEntry | null>(null);
+  const [toolFilter, setToolFilter] = useState<ToolFilter>('all');
+
+  // Determine which tools are actually present in the data to show as filter options
+  const activeTools = useMemo(() => {
+    return (Object.keys(AI_TOOLS) as AITool[]).filter(tool =>
+      data.some(entry => entry.aiToolBreakdown[tool] > 0)
+    );
+  }, [data]);
+
+  // Recompute entries when filtered by tool
+  const filteredData = useMemo(() => {
+    if (toolFilter === 'all') return data;
+
+    return data.map(entry => {
+      const filteredCommits = entry.aiToolBreakdown[toolFilter] || 0;
+      const filteredDetails = entry.commitDetails.filter(c => c.aiTool === toolFilter);
+      const aiPercentage = entry.totalCommits > 0 ? Math.round((filteredCommits / entry.totalCommits) * 100) : 0;
+
+      return {
+        ...entry,
+        commits: filteredCommits,
+        aiPercentage,
+        commitDetails: filteredDetails,
+      };
+    });
+  }, [data, toolFilter]);
 
   const sortedData = useMemo(() => {
-    const sorted = [...data].sort((a, b) => {
+    const sorted = [...filteredData].sort((a, b) => {
       const multiplier = sortDirection === 'desc' ? -1 : 1;
       return (a[sortField] - b[sortField]) * multiplier;
     });
     return sorted.map((entry, i) => ({ ...entry, rank: i + 1 }));
-  }, [data, sortField, sortDirection]);
+  }, [filteredData, sortField, sortDirection]);
 
   const handleSortClick = (field: SortField) => {
     if (field === sortField) {
@@ -107,7 +135,7 @@ export function Leaderboard({ data, isLoading, hasSelectedRepos = true }: Leader
   }) => {
     if (total === 0) return null;
 
-    const tools = (['claude-coauthor', 'claude-generated', 'copilot', 'cursor'] as const).filter(
+    const tools = (['claude-coauthor', 'claude-generated', 'copilot', 'cursor', 'codex', 'gemini'] as const).filter(
       tool => toolBreakdown[tool] > 0
     );
 
@@ -293,6 +321,34 @@ export function Leaderboard({ data, isLoading, hasSelectedRepos = true }: Leader
             </Button>
           </div>
         </div>
+        {activeTools.length > 1 && (
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-xs text-muted-foreground flex items-center gap-1">
+              <Filter className="h-3 w-3" />
+              Tool:
+            </span>
+            <Button
+              variant={toolFilter === 'all' ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => setToolFilter('all')}
+              className="text-xs h-7"
+            >
+              All
+            </Button>
+            {activeTools.map(tool => (
+              <Button
+                key={tool}
+                variant={toolFilter === tool ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setToolFilter(tool)}
+                className="text-xs h-7 gap-1.5"
+              >
+                <div className={cn('w-2 h-2 rounded-full', AI_TOOLS[tool].color)} />
+                {AI_TOOLS[tool].label}
+              </Button>
+            ))}
+          </div>
+        )}
       </CardHeader>
       <CardContent className="space-y-3">
         {sortedData.map((entry) => {

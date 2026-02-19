@@ -9,6 +9,8 @@ const TOOL_COLORS: Record<AITool, string> = {
   'claude-generated': '#6366f1',
   'copilot': '#3b82f6',
   'cursor': '#06b6d4',
+  'codex': '#22c55e',
+  'gemini': '#ef4444',
 };
 
 interface AIToolDistributionChartProps {
@@ -16,16 +18,28 @@ interface AIToolDistributionChartProps {
   totalAICommits: number;
 }
 
+// Group Claude Co-author + Claude Code into a single "Claude" entry for the chart
+const DISPLAY_GROUPS: { name: string; tools: AITool[]; color: string }[] = [
+  { name: 'Claude', tools: ['claude-coauthor', 'claude-generated'], color: '#a855f7' },
+  { name: 'GitHub Copilot', tools: ['copilot'], color: '#3b82f6' },
+  { name: 'Cursor', tools: ['cursor'], color: '#06b6d4' },
+  { name: 'OpenAI Codex', tools: ['codex'], color: '#22c55e' },
+  { name: 'Gemini CLI', tools: ['gemini'], color: '#ef4444' },
+];
+
 export function AIToolDistributionChart({ aiToolBreakdown, totalAICommits }: AIToolDistributionChartProps) {
   const chartData = useMemo(() => {
-    return (Object.keys(AI_TOOLS) as AITool[])
-      .filter((tool) => aiToolBreakdown[tool] > 0)
-      .map((tool) => ({
-        name: AI_TOOLS[tool].label,
-        value: aiToolBreakdown[tool],
-        percentage: totalAICommits > 0 ? Math.round((aiToolBreakdown[tool] / totalAICommits) * 1000) / 10 : 0,
-        color: TOOL_COLORS[tool],
-      }));
+    return DISPLAY_GROUPS
+      .map(group => {
+        const value = group.tools.reduce((sum, tool) => sum + (aiToolBreakdown[tool] || 0), 0);
+        return {
+          name: group.name,
+          value,
+          percentage: totalAICommits > 0 ? Math.round((value / totalAICommits) * 1000) / 10 : 0,
+          color: group.color,
+        };
+      })
+      .filter(entry => entry.value > 0);
   }, [aiToolBreakdown, totalAICommits]);
 
   if (chartData.length === 0) {

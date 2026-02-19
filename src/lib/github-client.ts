@@ -6,7 +6,7 @@
  */
 
 // Re-export types from the original github.ts
-export type AITool = 'claude-coauthor' | 'claude-generated' | 'copilot' | 'cursor';
+export type AITool = 'claude-coauthor' | 'claude-generated' | 'copilot' | 'cursor' | 'codex' | 'gemini';
 export type ClaudeModel = 'opus' | 'sonnet' | 'haiku' | 'unknown';
 
 export interface AIToolInfo {
@@ -46,6 +46,18 @@ export const AI_TOOLS: Record<AITool, AIToolInfo> = {
     label: 'Cursor',
     description: 'Co-authored by Cursor AI',
     color: 'bg-cyan-500',
+  },
+  'codex': {
+    id: 'codex',
+    label: 'OpenAI Codex',
+    description: 'Generated with OpenAI Codex CLI',
+    color: 'bg-green-500',
+  },
+  'gemini': {
+    id: 'gemini',
+    label: 'Gemini CLI',
+    description: 'Generated with Gemini CLI',
+    color: 'bg-red-500',
   },
 };
 
@@ -90,6 +102,8 @@ export interface AIToolBreakdown {
   'claude-generated': number;
   'copilot': number;
   'cursor': number;
+  'codex': number;
+  'gemini': number;
 }
 
 export interface FetchProgress {
@@ -98,7 +112,7 @@ export interface FetchProgress {
   activeRepos: string[];    // names of repos currently being fetched (up to 3)
   commitsFetched: number;   // running total across all repos
   totalCommitsEstimate: number | null; // total across all repos, null if unknown
-  phase: 'counting' | 'fetching' | 'analyzing';
+  phase: 'counting' | 'fetching' | 'fetching-prs' | 'analyzing';
 }
 
 interface CommitDetail {
@@ -154,6 +168,8 @@ const emptyToolBreakdown = (): AIToolBreakdown => ({
   'claude-generated': 0,
   'copilot': 0,
   'cursor': 0,
+  'codex': 0,
+  'gemini': 0,
 });
 
 const emptyModelBreakdown = (): ClaudeModelBreakdown => ({
@@ -238,6 +254,111 @@ async function runWithConcurrency<T>(
     }
   };
   await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, () => workerLoop()));
+}
+
+/** Map PR label names to AITool types */
+const PR_LABEL_TO_TOOL: Record<string, AITool> = {
+  'ai-claude-code': 'claude-generated',
+  'ai-codex': 'codex',
+  'ai-codex-cli': 'codex',
+  'ai-copilot': 'copilot',
+  'ai-cursor-agent': 'cursor',
+  'ai-cursor-chat': 'cursor',
+  'ai-gemini-cli': 'gemini',
+};
+
+const AI_PR_LABELS = Object.keys(PR_LABEL_TO_TOOL);
+
+interface PRLabelResult {
+  sha: string;
+  username: string;
+  aiTool: AITool;
+  repo: string;
+  date: string;
+}
+
+/**
+ * Fetch merged PRs with AI labels and resolve their merge commit SHAs.
+ */
+async function fetchAILabeledPRs(
+  token: string,
+  repositories: Repository[],
+  startDate: Date,
+  endDate: Date,
+  onProgress?: (msg: string) => void,
+): Promise<PRLabelResult[]> {
+  const headers: HeadersInit = {
+    'Accept': 'application/vnd.github.v3+json',
+    'Authorization': `Bearer ${token}`,
+  };
+
+  const results: PRLabelResult[] = [];
+  const startISO = startDate.toISOString().split('T')[0];
+  const endISO = endDate.toISOString().split('T')[0];
+
+  // Deduplicate by PR number per repo (a PR can match multiple labels)
+  const seenPRs = new Set<string>();
+
+  for (const repo of repositories) {
+    // Search per-label since GitHub search ANDs multiple label: qualifiers
+    for (const label of AI_PR_LABELS) {
+      let page = 1;
+      let hasMore = true;
+
+      while (hasMore) {
+        const q = encodeURIComponent(
+          `repo:${repo.owner}/${repo.name} is:pr is:merged merged:${startISO}..${endISO} label:${label}`
+        );
+        const url = `https://api.github.com/search/issues?q=${q}&per_page=100&page=${page}`;
+
+        const response = await fetch(url, { headers });
+        if (!response.ok) {
+          console.error(`Search API error for ${repo.name} label=${label}:`, response.status);
+          break;
+        }
+
+        const data = await response.json();
+        const items = data.items || [];
+
+        // For each PR, get the merge_commit_sha
+        await runWithConcurrency(items, 3, async (item: { number: number; labels: { name: string }[]; user?: { login: string } }) => {
+          const prKey = `${repo.owner}/${repo.name}#${item.number}`;
+          if (seenPRs.has(prKey)) return;
+          seenPRs.add(prKey);
+
+          const prUrl = `https://api.github.com/repos/${repo.owner}/${repo.name}/pulls/${item.number}`;
+          const prResponse = await fetch(prUrl, { headers });
+          if (!prResponse.ok) return;
+
+          const prData = await prResponse.json();
+          const mergeSha = prData.merge_commit_sha;
+          if (!mergeSha) return;
+
+          // Find which AI label(s) are on this PR — use the first matching one
+          const aiLabel = item.labels.find(l => PR_LABEL_TO_TOOL[l.name]);
+          if (!aiLabel) return;
+
+          const aiTool = PR_LABEL_TO_TOOL[aiLabel.name];
+          results.push({
+            sha: mergeSha,
+            username: item.user?.login || prData.user?.login || '',
+            aiTool,
+            repo: repo.displayName,
+            date: prData.merged_at || '',
+          });
+        });
+
+        onProgress?.(`Scanning PRs in ${repo.displayName} (${results.length} found)`);
+
+        hasMore = items.length === 100;
+        page++;
+
+        if (page > 10) break; // safety limit
+      }
+    }
+  }
+
+  return results;
 }
 
 /**
@@ -398,6 +519,55 @@ export async function fetchCommitDataClient(
       }
     }
   });
+
+  // Phase 3: Enrich with PR label data
+  onProgress?.({
+    completedRepos: repositories.length,
+    totalRepos: repositories.length,
+    activeRepos: [],
+    commitsFetched: allCommits.length,
+    totalCommitsEstimate,
+    phase: 'fetching-prs',
+  });
+
+  try {
+    const prResults = await fetchAILabeledPRs(
+      token,
+      repositories,
+      startDate,
+      endDate,
+      (msg) => {
+        onProgress?.({
+          completedRepos: repositories.length,
+          totalRepos: repositories.length,
+          activeRepos: [msg],
+          commitsFetched: allCommits.length,
+          totalCommitsEstimate,
+          phase: 'fetching-prs',
+        });
+      }
+    );
+
+    // Build set of already-detected AI commit SHAs
+    const detectedSHAs = new Set(aiCommitsWithTool.map(entry => entry.commit.sha));
+
+    // Build SHA-to-commit index for fast lookup
+    const commitBySHA = new Map(allCommits.map(c => [c.sha, c]));
+
+    for (const pr of prResults) {
+      if (detectedSHAs.has(pr.sha)) continue; // already detected, skip
+
+      const commit = commitBySHA.get(pr.sha);
+      if (!commit) continue; // merge commit not in our fetched commits
+
+      aiCommitsWithTool.push({ commit, aiTool: pr.aiTool });
+      globalToolBreakdown[pr.aiTool]++;
+      detectedSHAs.add(pr.sha);
+    }
+  } catch (err) {
+    console.error('Failed to fetch AI-labeled PRs:', err);
+    // Continue without PR label data
+  }
 
   // Count total commits by user and collect all commit dates
   const userTotalCommits = new Map<string, number>();

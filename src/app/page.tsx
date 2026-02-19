@@ -48,6 +48,8 @@ function HomeContent() {
     'claude-generated': 0,
     'copilot': 0,
     'cursor': 0,
+    'codex': 0,
+    'gemini': 0,
   }), []);
 
   const emptyModelBreakdown = useMemo<ClaudeModelBreakdown>(() => ({
@@ -375,7 +377,7 @@ function HomeContent() {
                       )}
                     </div>
                     <div className="text-sm text-muted-foreground mt-1">
-                      {progress.phase === 'analyzing' ? 'commits being analyzed' : 'commits fetched'}
+                      {progress.phase === 'analyzing' ? 'commits being analyzed' : progress.phase === 'fetching-prs' ? 'Scanning PR labels for AI tool usage' : 'commits fetched'}
                     </div>
                   </>
                 )}
@@ -384,7 +386,7 @@ function HomeContent() {
               {/* Progress bar */}
               <div className="space-y-2">
                 <div className="h-2 bg-muted rounded-full overflow-hidden">
-                  {progress.phase === 'counting' || progress.phase === 'analyzing' ? (
+                  {progress.phase === 'counting' || progress.phase === 'analyzing' || progress.phase === 'fetching-prs' ? (
                     <div className="h-full w-full progress-bar-shimmer rounded-full" />
                   ) : progress.totalCommitsEstimate != null && progress.totalCommitsEstimate > 0 ? (
                     <div
@@ -403,6 +405,14 @@ function HomeContent() {
                     <span>Preparing...</span>
                   ) : progress.phase === 'analyzing' ? (
                     <span>Scanning for AI-assisted commits...</span>
+                  ) : progress.phase === 'fetching-prs' ? (
+                    <span>
+                      {progress.activeRepos.length > 0 ? (
+                        <span className="font-medium text-foreground">{progress.activeRepos[0]}</span>
+                      ) : (
+                        'Scanning PR labels for AI tools...'
+                      )}
+                    </span>
                   ) : (
                     <span>
                       Fetching from {progress.activeRepos.map((name, i) => (
@@ -445,12 +455,6 @@ function HomeContent() {
               isLoading={isLoading}
               hasSelectedRepos={selectedRepos.length > 0}
             />
-
-            <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 dark:border-amber-900/50 dark:bg-amber-900/10">
-              <p className="text-sm text-amber-800 dark:text-amber-200">
-                <span className="font-medium">Note:</span> Codex does not automatically add co-author metadata to commits, so AI-assisted commits from Codex users will not be detected here. This is a known gap.
-              </p>
-            </div>
 
             <Leaderboard
               data={data.leaderboard}

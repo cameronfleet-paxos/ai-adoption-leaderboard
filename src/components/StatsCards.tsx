@@ -18,7 +18,7 @@ export function StatsCards({ totalCommits, aiCommits, aiToolBreakdown, claudeMod
   const adoptionRate = totalCommits > 0 ? Math.round((aiCommits / totalCommits) * 100) : 0;
 
   // Build AI tool breakdown display
-  const aiTools = (['claude-coauthor', 'claude-generated', 'copilot', 'cursor'] as const).filter(
+  const aiTools = (['claude-coauthor', 'claude-generated', 'copilot', 'cursor', 'codex', 'gemini'] as const).filter(
     tool => aiToolBreakdown[tool] > 0
   );
 

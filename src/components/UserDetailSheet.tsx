@@ -108,7 +108,7 @@ export function UserDetailSheet({ user, open, onOpenChange }: UserDetailSheetPro
     }
   };
 
-  const toolEntries = (['claude-coauthor', 'claude-generated', 'copilot', 'cursor'] as const).filter(
+  const toolEntries = (['claude-coauthor', 'claude-generated', 'copilot', 'cursor', 'codex', 'gemini'] as const).filter(
     tool => user.aiToolBreakdown[tool] > 0
   );
 
