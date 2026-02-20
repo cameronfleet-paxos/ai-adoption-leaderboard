@@ -90,6 +90,18 @@ export interface Repository {
   displayName: string;
 }
 
+export interface PRLabelEntry {
+  label: string;
+  aiTool: AITool;
+  enabled: boolean;
+  isDefault: boolean;
+}
+
+export interface PRLabelConfig {
+  labels: PRLabelEntry[];
+  labelScanRepos: string[];
+}
+
 export interface ClaudeModelBreakdown {
   opus: number;
   sonnet: number;
@@ -234,6 +246,12 @@ function detectAITool(message: string): { aiTool: AITool; claudeModel?: ClaudeMo
     return { aiTool: 'cursor' };
   }
 
+  // 5. Codex Co-author pattern
+  const codexCoAuthorRegex = /co-authored-by:\s*codex\s*<[^>]*@openai\.com>/i;
+  if (codexCoAuthorRegex.test(message)) {
+    return { aiTool: 'codex' };
+  }
+
   return null;
 }
 
@@ -257,7 +275,7 @@ async function runWithConcurrency<T>(
 }
 
 /** Map PR label names to AITool types */
-const PR_LABEL_TO_TOOL: Record<string, AITool> = {
+export const DEFAULT_PR_LABEL_TO_TOOL: Record<string, AITool> = {
   'ai-claude-code': 'claude-generated',
   'ai-codex': 'codex',
   'ai-codex-cli': 'codex',
@@ -267,7 +285,27 @@ const PR_LABEL_TO_TOOL: Record<string, AITool> = {
   'ai-gemini-cli': 'gemini',
 };
 
-const AI_PR_LABELS = Object.keys(PR_LABEL_TO_TOOL);
+const AI_PR_LABELS = Object.keys(DEFAULT_PR_LABEL_TO_TOOL);
+
+export function getDefaultPRLabelConfig(selectedRepos: string[]): PRLabelConfig {
+  return {
+    labels: Object.entries(DEFAULT_PR_LABEL_TO_TOOL).map(([label, aiTool]) => ({
+      label,
+      aiTool,
+      enabled: true,
+      isDefault: true,
+    })),
+    labelScanRepos: selectedRepos,
+  };
+}
+
+interface PRScanProgress {
+  currentRepo: string;
+  completedLabels: number;
+  totalLabels: number;
+  prsFound: number;
+  status?: string;
+}
 
 interface PRLabelResult {
   sha: string;
@@ -285,8 +323,26 @@ async function fetchAILabeledPRs(
   repositories: Repository[],
   startDate: Date,
   endDate: Date,
-  onProgress?: (msg: string) => void,
+  onProgress?: (progress: PRScanProgress) => void,
+  labelConfig?: PRLabelConfig,
 ): Promise<PRLabelResult[]> {
+  // Build active label map from config or use defaults
+  const activeLabelMap: Record<string, AITool> = {};
+  if (labelConfig) {
+    for (const entry of labelConfig.labels) {
+      if (entry.enabled) activeLabelMap[entry.label] = entry.aiTool;
+    }
+  } else {
+    Object.assign(activeLabelMap, DEFAULT_PR_LABEL_TO_TOOL);
+  }
+  const activeLabels = Object.keys(activeLabelMap);
+  if (activeLabels.length === 0) return [];
+
+  const reposToScan = labelConfig
+    ? repositories.filter(r => labelConfig.labelScanRepos.includes(r.name))
+    : repositories;
+  if (reposToScan.length === 0) return [];
+
   const headers: HeadersInit = {
     'Accept': 'application/vnd.github.v3+json',
     'Authorization': `Bearer ${token}`,
@@ -299,9 +355,65 @@ async function fetchAILabeledPRs(
   // Deduplicate by PR number per repo (a PR can match multiple labels)
   const seenPRs = new Set<string>();
 
-  for (const repo of repositories) {
+  // Track search API calls to proactively throttle (GitHub allows 30/min)
+  let searchCallTimestamps: number[] = [];
+
+  const throttleSearchAPI = async () => {
+    const now = Date.now();
+    // Remove timestamps older than 60s
+    searchCallTimestamps = searchCallTimestamps.filter(t => now - t < 60000);
+    // If we've made 28+ calls in the last 60s, wait until the oldest one ages out
+    if (searchCallTimestamps.length >= 28) {
+      const oldestInWindow = searchCallTimestamps[0];
+      const waitMs = 60000 - (now - oldestInWindow) + 1000;
+      if (waitMs > 0) {
+        const totalSecs = Math.ceil(waitMs / 1000);
+        for (let remaining = totalSecs; remaining > 0; remaining--) {
+          onProgress?.({
+            currentRepo: currentRepoName,
+            completedLabels: currentCompletedLabels,
+            totalLabels: activeLabels.length,
+            prsFound: results.length,
+            status: `Throttling to avoid rate limit... ${remaining}s`,
+          });
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+      }
+    }
+    searchCallTimestamps.push(Date.now());
+  };
+
+  // Countdown wait helper — ticks every second so the UI updates in real time
+  const countdownWait = async (waitMs: number, reason: string) => {
+    const totalSecs = Math.ceil(waitMs / 1000);
+    for (let remaining = totalSecs; remaining > 0; remaining--) {
+      onProgress?.({
+        currentRepo: currentRepoName,
+        completedLabels: currentCompletedLabels,
+        totalLabels: activeLabels.length,
+        prsFound: results.length,
+        status: `${reason} ${remaining}s`,
+      });
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+  };
+
+  let currentRepoName = '';
+  let currentCompletedLabels = 0;
+
+  for (const repo of reposToScan) {
+    currentCompletedLabels = 0;
+    currentRepoName = repo.displayName;
+
     // Search per-label since GitHub search ANDs multiple label: qualifiers
-    for (const label of AI_PR_LABELS) {
+    for (const label of activeLabels) {
+      onProgress?.({
+        currentRepo: repo.displayName,
+        completedLabels: currentCompletedLabels,
+        totalLabels: activeLabels.length,
+        prsFound: results.length,
+      });
+
       let page = 1;
       let hasMore = true;
 
@@ -311,10 +423,28 @@ async function fetchAILabeledPRs(
         );
         const url = `https://api.github.com/search/issues?q=${q}&per_page=100&page=${page}`;
 
-        const response = await fetch(url, { headers });
+        // Proactively throttle to stay under 30 req/min
+        await throttleSearchAPI();
+
+        let response = await fetch(url, { headers });
+
+        // Rate limit handling: retry once after countdown wait
+        if (response.status === 403 || response.status === 429) {
+          const retryAfter = response.headers.get('retry-after');
+          const resetHeader = response.headers.get('x-ratelimit-reset');
+          let waitMs = 10000; // default 10s
+          if (retryAfter) {
+            waitMs = parseInt(retryAfter, 10) * 1000;
+          } else if (resetHeader) {
+            waitMs = Math.max(0, parseInt(resetHeader, 10) * 1000 - Date.now()) + 1000;
+          }
+          await countdownWait(waitMs, 'Rate limited, retrying in');
+          response = await fetch(url, { headers });
+        }
+
         if (!response.ok) {
           console.error(`Search API error for ${repo.name} label=${label}:`, response.status);
-          break;
+          break; // skip remaining pages for this label, continue to next label
         }
 
         const data = await response.json();
@@ -335,10 +465,10 @@ async function fetchAILabeledPRs(
           if (!mergeSha) return;
 
           // Find which AI label(s) are on this PR — use the first matching one
-          const aiLabel = item.labels.find(l => PR_LABEL_TO_TOOL[l.name]);
+          const aiLabel = item.labels.find(l => activeLabelMap[l.name]);
           if (!aiLabel) return;
 
-          const aiTool = PR_LABEL_TO_TOOL[aiLabel.name];
+          const aiTool = activeLabelMap[aiLabel.name];
           results.push({
             sha: mergeSha,
             username: item.user?.login || prData.user?.login || '',
@@ -348,13 +478,20 @@ async function fetchAILabeledPRs(
           });
         });
 
-        onProgress?.(`Scanning PRs in ${repo.displayName} (${results.length} found)`);
+        onProgress?.({
+          currentRepo: repo.displayName,
+          completedLabels: currentCompletedLabels,
+          totalLabels: activeLabels.length,
+          prsFound: results.length,
+        });
 
         hasMore = items.length === 100;
         page++;
 
         if (page > 10) break; // safety limit
       }
+
+      currentCompletedLabels++;
     }
   }
 
@@ -368,7 +505,8 @@ export async function fetchCommitDataClient(
   token: string,
   repositories: Repository[],
   dateRange?: { start: Date; end: Date },
-  onProgress?: (progress: FetchProgress) => void
+  onProgress?: (progress: FetchProgress) => void,
+  labelConfig?: PRLabelConfig,
 ): Promise<LeaderboardData> {
   let startDate: Date;
   let endDate: Date;
@@ -536,16 +674,20 @@ export async function fetchCommitDataClient(
       repositories,
       startDate,
       endDate,
-      (msg) => {
+      (prProgress) => {
         onProgress?.({
           completedRepos: repositories.length,
           totalRepos: repositories.length,
-          activeRepos: [msg],
+          activeRepos: [
+            prProgress.status ||
+            `${prProgress.currentRepo}: label ${prProgress.completedLabels}/${prProgress.totalLabels} (${prProgress.prsFound} PRs found)`
+          ],
           commitsFetched: allCommits.length,
           totalCommitsEstimate,
           phase: 'fetching-prs',
         });
-      }
+      },
+      labelConfig,
     );
 
     // Build set of already-detected AI commit SHAs

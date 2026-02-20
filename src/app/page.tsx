@@ -9,6 +9,7 @@ import { AnalyticsSection } from '@/components/AnalyticsSection';
 import { Header } from '@/components/Header';
 import { DateRangeSelector } from '@/components/DateRangeSelector';
 import { RepositorySelector } from '@/components/RepositorySelector';
+import { PRLabelConfig } from '@/components/PRLabelConfig';
 import { TokenAuth } from '@/components/TokenAuth';
 import { OAuthLogin } from '@/components/OAuthLogin';
 import {
@@ -18,7 +19,9 @@ import {
   type ClaudeModelBreakdown,
   type ClaudeModel,
   type FetchProgress,
+  type PRLabelConfig as PRLabelConfigType,
   fetchCommitDataClient,
+  getDefaultPRLabelConfig,
 } from '@/lib/github-client';
 
 // Check if OAuth is available (client-side check)
@@ -105,6 +108,31 @@ function HomeContent() {
 
   const [dateRange, setDateRange] = useState(getDefaultDateRange());
 
+  // PR label config state with localStorage persistence
+  const [labelConfig, setLabelConfig] = useState<PRLabelConfigType>(() => {
+    if (typeof window === 'undefined') return getDefaultPRLabelConfig([]);
+    try {
+      const stored = localStorage.getItem('prLabelConfig');
+      if (stored) return JSON.parse(stored);
+    } catch { /* ignore */ }
+    return getDefaultPRLabelConfig([]);
+  });
+
+  const handleLabelConfigChange = useCallback((config: PRLabelConfigType) => {
+    setLabelConfig(config);
+    try {
+      localStorage.setItem('prLabelConfig', JSON.stringify(config));
+    } catch { /* ignore */ }
+  }, []);
+
+  // Prune stale repos from label scan config when selectedRepos changes
+  useEffect(() => {
+    const validScanRepos = labelConfig.labelScanRepos.filter(r => selectedRepos.includes(r));
+    if (validScanRepos.length !== labelConfig.labelScanRepos.length) {
+      handleLabelConfigChange({ ...labelConfig, labelScanRepos: validScanRepos });
+    }
+  }, [selectedRepos]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Update URL when selected repos change
   const updateUrlWithRepos = useCallback((repos: string[]) => {
     const params = new URLSearchParams(searchParams.toString());
@@ -165,6 +193,13 @@ function HomeContent() {
                   repos.some((repo: Repository) => repo.name === repoName)
                 );
                 setSelectedRepos(validRepos);
+
+                // Init label scan repos if no stored config
+                if (!localStorage.getItem('prLabelConfig') && validRepos.length > 0) {
+                  const defaultConfig = getDefaultPRLabelConfig(validRepos);
+                  setLabelConfig(defaultConfig);
+                  localStorage.setItem('prLabelConfig', JSON.stringify(defaultConfig));
+                }
               } catch {
                 setSelectedRepos([]);
               }
@@ -221,7 +256,8 @@ function HomeContent() {
           start: new Date(dateRange.startDate),
           end: new Date(dateRange.endDate)
         },
-        setProgress
+        setProgress,
+        labelConfig,
       );
 
       setData(result);
@@ -232,7 +268,7 @@ function HomeContent() {
     } finally {
       setIsLoading(false);
     }
-  }, [dateRange.startDate, dateRange.endDate, selectedRepos, isAuthenticated, token, repositories, emptyToolBreakdown, emptyModelBreakdown]);
+  }, [dateRange.startDate, dateRange.endDate, selectedRepos, isAuthenticated, token, repositories, emptyToolBreakdown, emptyModelBreakdown, labelConfig]);
 
   const handleDateChange = (startDate: string, endDate: string) => {
     setDateRange({ startDate, endDate });
@@ -338,6 +374,12 @@ function HomeContent() {
             setRepositories(repos);
             setHasMoreRepos(hasMore);
           }}
+        />
+
+        <PRLabelConfig
+          labelConfig={labelConfig}
+          onLabelConfigChange={handleLabelConfigChange}
+          selectedRepos={selectedRepos}
         />
 
         <DateRangeSelector

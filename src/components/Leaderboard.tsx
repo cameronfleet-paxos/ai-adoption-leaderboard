@@ -42,7 +42,9 @@ interface LeaderboardProps {
 type SortField = 'commits' | 'aiPercentage';
 type SortDirection = 'asc' | 'desc';
 
-type ToolFilter = 'all' | AITool;
+type ToolFilter = 'all' | 'claude' | AITool;
+
+const CLAUDE_TOOLS: AITool[] = ['claude-coauthor', 'claude-generated'];
 
 export function Leaderboard({ data, isLoading, hasSelectedRepos = true }: LeaderboardProps) {
   const [expandedUser, setExpandedUser] = useState<string | null>(null);
@@ -52,19 +54,33 @@ export function Leaderboard({ data, isLoading, hasSelectedRepos = true }: Leader
   const [toolFilter, setToolFilter] = useState<ToolFilter>('all');
 
   // Determine which tools are actually present in the data to show as filter options
-  const activeTools = useMemo(() => {
-    return (Object.keys(AI_TOOLS) as AITool[]).filter(tool =>
+  // Claude tools are combined into a single "Claude" filter
+  const hasClaudeData = useMemo(() => {
+    return CLAUDE_TOOLS.some(tool =>
       data.some(entry => entry.aiToolBreakdown[tool] > 0)
     );
   }, [data]);
+
+  const activeNonClaudeTools = useMemo(() => {
+    return (Object.keys(AI_TOOLS) as AITool[]).filter(tool =>
+      !CLAUDE_TOOLS.includes(tool) && data.some(entry => entry.aiToolBreakdown[tool] > 0)
+    );
+  }, [data]);
+
+  const activeFilterCount = (hasClaudeData ? 1 : 0) + activeNonClaudeTools.length;
 
   // Recompute entries when filtered by tool
   const filteredData = useMemo(() => {
     if (toolFilter === 'all') return data;
 
+    const matchesFilter = (tool: AITool) =>
+      toolFilter === 'claude' ? CLAUDE_TOOLS.includes(tool) : tool === toolFilter;
+
     return data.map(entry => {
-      const filteredCommits = entry.aiToolBreakdown[toolFilter] || 0;
-      const filteredDetails = entry.commitDetails.filter(c => c.aiTool === toolFilter);
+      const filteredCommits = toolFilter === 'claude'
+        ? CLAUDE_TOOLS.reduce((sum, t) => sum + (entry.aiToolBreakdown[t] || 0), 0)
+        : entry.aiToolBreakdown[toolFilter] || 0;
+      const filteredDetails = entry.commitDetails.filter(c => matchesFilter(c.aiTool));
       const aiPercentage = entry.totalCommits > 0 ? Math.round((filteredCommits / entry.totalCommits) * 100) : 0;
 
       return {
@@ -321,7 +337,7 @@ export function Leaderboard({ data, isLoading, hasSelectedRepos = true }: Leader
             </Button>
           </div>
         </div>
-        {activeTools.length > 1 && (
+        {activeFilterCount > 1 && (
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-xs text-muted-foreground flex items-center gap-1">
               <Filter className="h-3 w-3" />
@@ -335,7 +351,18 @@ export function Leaderboard({ data, isLoading, hasSelectedRepos = true }: Leader
             >
               All
             </Button>
-            {activeTools.map(tool => (
+            {hasClaudeData && (
+              <Button
+                variant={toolFilter === 'claude' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setToolFilter('claude')}
+                className="text-xs h-7 gap-1.5"
+              >
+                <div className={cn('w-2 h-2 rounded-full', AI_TOOLS['claude-coauthor'].color)} />
+                Claude
+              </Button>
+            )}
+            {activeNonClaudeTools.map(tool => (
               <Button
                 key={tool}
                 variant={toolFilter === tool ? 'default' : 'outline'}
