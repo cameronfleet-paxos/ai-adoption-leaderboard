@@ -719,16 +719,34 @@ export async function fetchCommitDataClient(
     // Continue without PR label data
   }
 
-  // Agent detection: all commits from -agent suffixed users count as AI
+  // Agent detection: all commits from -agent[bot] suffixed users are tagged as 'agent',
+  // even if they were already detected via co-author trailers or PR labels.
   {
-    const agentDetectedSHAs = new Set(aiCommitsWithTool.map(e => e.commit.sha));
+    const agentUserSHAs = new Set<string>();
     for (const commit of allCommits) {
       const username = commit.author?.login;
-      if (!username || !username.endsWith('-agent[bot]')) continue;
-      if (agentDetectedSHAs.has(commit.sha)) continue;
-      aiCommitsWithTool.push({ commit, aiTool: 'agent' });
-      globalToolBreakdown['agent']++;
-      agentDetectedSHAs.add(commit.sha);
+      if (username && username.endsWith('-agent[bot]')) {
+        agentUserSHAs.add(commit.sha);
+      }
+    }
+
+    // Re-tag any already-detected commits from agent users
+    for (const entry of aiCommitsWithTool) {
+      if (agentUserSHAs.has(entry.commit.sha) && entry.aiTool !== 'agent') {
+        globalToolBreakdown[entry.aiTool]--;
+        entry.aiTool = 'agent';
+        entry.claudeModel = undefined;
+        globalToolBreakdown['agent']++;
+        agentUserSHAs.delete(entry.commit.sha);
+      }
+    }
+
+    // Add any remaining agent commits not yet detected
+    for (const commit of allCommits) {
+      if (agentUserSHAs.has(commit.sha)) {
+        aiCommitsWithTool.push({ commit, aiTool: 'agent' });
+        globalToolBreakdown['agent']++;
+      }
     }
   }
 
