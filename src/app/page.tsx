@@ -53,6 +53,7 @@ function HomeContent() {
     'cursor': 0,
     'codex': 0,
     'gemini': 0,
+    'agent': 0,
   }), []);
 
   const emptyModelBreakdown = useMemo<ClaudeModelBreakdown>(() => ({

@@ -11,6 +11,7 @@ const TOOL_COLORS: Record<AITool, string> = {
   'cursor': '#06b6d4',
   'codex': '#22c55e',
   'gemini': '#ef4444',
+  'agent': '#f97316',
 };
 
 interface AIToolDistributionChartProps {
@@ -25,6 +26,7 @@ const DISPLAY_GROUPS: { name: string; tools: AITool[]; color: string }[] = [
   { name: 'Cursor', tools: ['cursor'], color: '#06b6d4' },
   { name: 'OpenAI Codex', tools: ['codex'], color: '#22c55e' },
   { name: 'Gemini CLI', tools: ['gemini'], color: '#ef4444' },
+  { name: 'AI Agents', tools: ['agent'], color: '#f97316' },
 ];
 
 export function AIToolDistributionChart({ aiToolBreakdown, totalAICommits }: AIToolDistributionChartProps) {
@@ -63,6 +65,7 @@ export function AIToolDistributionChart({ aiToolBreakdown, totalAICommits }: AIT
               innerRadius={55}
               outerRadius={85}
               paddingAngle={2}
+              minAngle={3}
               dataKey="value"
             >
               {chartData.map((entry, index) => (

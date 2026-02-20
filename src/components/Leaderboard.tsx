@@ -42,7 +42,7 @@ interface LeaderboardProps {
 type SortField = 'commits' | 'aiPercentage';
 type SortDirection = 'asc' | 'desc';
 
-type ToolFilter = 'all' | 'claude' | AITool;
+type ToolFilter = 'all' | 'claude' | 'agents' | AITool;
 
 const CLAUDE_TOOLS: AITool[] = ['claude-coauthor', 'claude-generated'];
 
@@ -63,15 +63,23 @@ export function Leaderboard({ data, isLoading, hasSelectedRepos = true }: Leader
 
   const activeNonClaudeTools = useMemo(() => {
     return (Object.keys(AI_TOOLS) as AITool[]).filter(tool =>
-      !CLAUDE_TOOLS.includes(tool) && data.some(entry => entry.aiToolBreakdown[tool] > 0)
+      tool !== 'agent' && !CLAUDE_TOOLS.includes(tool) && data.some(entry => entry.aiToolBreakdown[tool] > 0)
     );
   }, [data]);
 
-  const activeFilterCount = (hasClaudeData ? 1 : 0) + activeNonClaudeTools.length;
+  const hasAgentUsers = useMemo(() => {
+    return data.some(entry => entry.username.endsWith('-agent[bot]') || entry.aiToolBreakdown['agent'] > 0);
+  }, [data]);
+
+  const activeFilterCount = (hasClaudeData ? 1 : 0) + activeNonClaudeTools.length + (hasAgentUsers ? 1 : 0);
 
   // Recompute entries when filtered by tool
   const filteredData = useMemo(() => {
     if (toolFilter === 'all') return data;
+
+    if (toolFilter === 'agents') {
+      return data.filter(entry => entry.username.endsWith('-agent[bot]') || entry.aiToolBreakdown['agent'] > 0);
+    }
 
     const matchesFilter = (tool: AITool) =>
       toolFilter === 'claude' ? CLAUDE_TOOLS.includes(tool) : tool === toolFilter;
@@ -151,7 +159,7 @@ export function Leaderboard({ data, isLoading, hasSelectedRepos = true }: Leader
   }) => {
     if (total === 0) return null;
 
-    const tools = (['claude-coauthor', 'claude-generated', 'copilot', 'cursor', 'codex', 'gemini'] as const).filter(
+    const tools = (['claude-coauthor', 'claude-generated', 'copilot', 'cursor', 'codex', 'gemini', 'agent'] as const).filter(
       tool => toolBreakdown[tool] > 0
     );
 
@@ -337,7 +345,7 @@ export function Leaderboard({ data, isLoading, hasSelectedRepos = true }: Leader
             </Button>
           </div>
         </div>
-        {activeFilterCount > 1 && (
+        {(activeFilterCount > 1 || hasAgentUsers) && (
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-xs text-muted-foreground flex items-center gap-1">
               <Filter className="h-3 w-3" />
@@ -374,6 +382,17 @@ export function Leaderboard({ data, isLoading, hasSelectedRepos = true }: Leader
                 {AI_TOOLS[tool].label}
               </Button>
             ))}
+            {hasAgentUsers && (
+              <Button
+                variant={toolFilter === 'agents' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setToolFilter('agents')}
+                className="text-xs h-7 gap-1.5"
+              >
+                <div className={cn('w-2 h-2 rounded-full', 'bg-orange-500')} />
+                Agents
+              </Button>
+            )}
           </div>
         )}
       </CardHeader>

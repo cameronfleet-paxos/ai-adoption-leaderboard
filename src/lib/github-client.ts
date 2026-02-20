@@ -6,7 +6,7 @@
  */
 
 // Re-export types from the original github.ts
-export type AITool = 'claude-coauthor' | 'claude-generated' | 'copilot' | 'cursor' | 'codex' | 'gemini';
+export type AITool = 'claude-coauthor' | 'claude-generated' | 'copilot' | 'cursor' | 'codex' | 'gemini' | 'agent';
 export type ClaudeModel = 'opus' | 'sonnet' | 'haiku' | 'unknown';
 
 export interface AIToolInfo {
@@ -58,6 +58,12 @@ export const AI_TOOLS: Record<AITool, AIToolInfo> = {
     label: 'Gemini CLI',
     description: 'Generated with Gemini CLI',
     color: 'bg-red-500',
+  },
+  'agent': {
+    id: 'agent',
+    label: 'AI Agent',
+    description: 'Commits from AI agent users',
+    color: 'bg-orange-500',
   },
 };
 
@@ -116,6 +122,7 @@ export interface AIToolBreakdown {
   'cursor': number;
   'codex': number;
   'gemini': number;
+  'agent': number;
 }
 
 export interface FetchProgress {
@@ -182,6 +189,7 @@ const emptyToolBreakdown = (): AIToolBreakdown => ({
   'cursor': 0,
   'codex': 0,
   'gemini': 0,
+  'agent': 0,
 });
 
 const emptyModelBreakdown = (): ClaudeModelBreakdown => ({
@@ -709,6 +717,19 @@ export async function fetchCommitDataClient(
   } catch (err) {
     console.error('Failed to fetch AI-labeled PRs:', err);
     // Continue without PR label data
+  }
+
+  // Agent detection: all commits from -agent suffixed users count as AI
+  {
+    const agentDetectedSHAs = new Set(aiCommitsWithTool.map(e => e.commit.sha));
+    for (const commit of allCommits) {
+      const username = commit.author?.login;
+      if (!username || !username.endsWith('-agent[bot]')) continue;
+      if (agentDetectedSHAs.has(commit.sha)) continue;
+      aiCommitsWithTool.push({ commit, aiTool: 'agent' });
+      globalToolBreakdown['agent']++;
+      agentDetectedSHAs.add(commit.sha);
+    }
   }
 
   // Count total commits by user and collect all commit dates
