@@ -3,19 +3,11 @@
 import { useMemo, useState, useEffect } from 'react';
 import { TrendingUp, Layers, Split } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { cn } from '@/lib/utils';
+import { cn, floorToMonday } from '@/lib/utils';
 import { TrendLineChart, type TrendPoint, type TrendViewMode } from '@/components/TrendLineChart';
 import type { PRMetricsRaw } from '@/lib/github-client';
 
 const TRENDS_PREFS_KEY = 'trends-card-prefs';
-
-function floorToMonday(date: Date): string {
-  const d = new Date(date);
-  const day = d.getDay();
-  const diff = (day === 0 ? 6 : day - 1); // Monday = 0
-  d.setDate(d.getDate() - diff);
-  return d.toISOString().slice(0, 10);
-}
 
 function floorToMonth(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;

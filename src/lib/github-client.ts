@@ -183,6 +183,7 @@ export interface PRMetricsRaw {
   reviewComments: number;
   isRevert: boolean;
   category: PRCategory;
+  isLookback?: boolean;
 }
 
 export interface ExtremePR {
@@ -247,7 +248,7 @@ interface GitHubCommit {
 }
 
 // --- In-memory single-entry cache for leaderboard data ---
-type CommitWithRepo = GitHubCommit & { repository: string };
+export type CommitWithRepo = GitHubCommit & { repository: string };
 
 interface LeaderboardCacheEntry {
   reposKey: string;
@@ -591,7 +592,7 @@ interface PRScanProgress {
   status?: string;
 }
 
-interface PRLabelResult {
+export interface PRLabelResult {
   sha: string;
   username: string;
   aiTool: AITool;
@@ -785,12 +786,37 @@ async function fetchAILabeledPRs(
 /**
  * Fetch commit data from GitHub API (client-side)
  */
+export interface CachedDataInput {
+  commits: Record<string, Array<{
+    sha: string;
+    repository: string;
+    authorLogin: string | null;
+    authorAvatarUrl: string | null;
+    authorName: string;
+    authorEmail: string;
+    authorDate: string;
+    message: string;
+  }>>;
+  prLabels: Record<string, Array<{
+    sha: string;
+    username: string;
+    aiTool: string;
+    repo: string;
+    date: string;
+  }>>;
+  coverage: Record<string, {
+    commits: { earliest: string | null; latest: string | null; gaps: Array<{ start: string; end: string }> };
+    prLabels: { earliest: string | null; latest: string | null; gaps: Array<{ start: string; end: string }> };
+  }>;
+}
+
 export async function fetchCommitDataClient(
   token: string,
   repositories: Repository[],
   dateRange?: { start: Date; end: Date },
   onProgress?: (progress: FetchProgress) => void,
   labelConfig?: PRLabelConfig,
+  cachedData?: CachedDataInput,
 ): Promise<LeaderboardData> {
   let startDate: Date;
   let endDate: Date;
@@ -842,43 +868,102 @@ export async function fetchCommitDataClient(
 
   const allCommits: CommitWithRepo[] = [];
 
-  // Phase 1: Count total commits across all repos (1 lightweight request per repo)
-  let totalCommitsEstimate: number | null = null;
-
-  onProgress?.({
-    completedRepos: 0,
-    totalRepos: repositories.length,
-    activeRepos: [],
-    commitsFetched: 0,
-    totalCommitsEstimate: null,
-    phase: 'counting',
+  // Helper: convert cached commit to CommitWithRepo
+  const cachedToCommitWithRepo = (c: CachedDataInput['commits'][string][number]): CommitWithRepo => ({
+    sha: c.sha,
+    repository: c.repository,
+    commit: {
+      author: { name: c.authorName, email: c.authorEmail, date: c.authorDate },
+      message: c.message,
+    },
+    author: c.authorLogin ? { login: c.authorLogin, avatar_url: c.authorAvatarUrl || '' } : null,
   });
 
-  try {
-    const counts = await Promise.all(
-      repositories.map(async (repo) => {
-        const url = `https://api.github.com/repos/${repo.owner}/${repo.name}/commits?since=${startDate.toISOString()}&until=${endDate.toISOString()}&per_page=1`;
-        const response = await fetch(url, { headers });
-        if (!response.ok) return 0;
-        const linkHeader = response.headers.get('link');
-        if (!linkHeader) {
-          // No link header means 0 or 1 commits
-          const body = await response.json();
-          return Array.isArray(body) ? body.length : 0;
-        }
-        const match = linkHeader.match(/page=(\d+)>;\s*rel="last"/);
-        return match ? parseInt(match[1], 10) : 1;
-      })
-    );
-    totalCommitsEstimate = counts.reduce((sum, c) => sum + c, 0);
-  } catch (err) {
-    console.warn('Failed to count commits:', err);
-    // Continue without estimate
+  // Determine which repos need fetching vs are fully cached
+  const reposToFetch: Repository[] = [];
+  const repoGaps = new Map<string, Array<{ start: string; end: string }>>();
+
+  for (const repo of repositories) {
+    const repoKey = `${repo.owner}/${repo.name}`;
+    const coverage = cachedData?.coverage?.[repoKey];
+
+    if (coverage && coverage.commits.gaps.length === 0) {
+      // Full cache hit — use cached commits directly
+      const cached = cachedData.commits[repoKey] || [];
+      allCommits.push(...cached.map(cachedToCommitWithRepo));
+    } else {
+      reposToFetch.push(repo);
+      if (coverage && coverage.commits.gaps.length > 0) {
+        repoGaps.set(repoKey, coverage.commits.gaps);
+        // Also include cached commits for this repo (partial hit)
+        const cached = cachedData?.commits?.[repoKey] || [];
+        allCommits.push(...cached.map(cachedToCommitWithRepo));
+      }
+    }
   }
 
-  // Phase 2: Fetch commits from all repositories (3 concurrent workers)
+  // Phase 1: Count total commits across repos that need fetching
+  let totalCommitsEstimate: number | null = null;
+
+  if (reposToFetch.length > 0) {
+    onProgress?.({
+      completedRepos: 0,
+      totalRepos: repositories.length,
+      activeRepos: [],
+      commitsFetched: allCommits.length,
+      totalCommitsEstimate: null,
+      phase: 'counting',
+    });
+
+    try {
+      const counts = await Promise.all(
+        reposToFetch.map(async (repo) => {
+          const repoKey = `${repo.owner}/${repo.name}`;
+          const gaps = repoGaps.get(repoKey);
+
+          if (gaps && gaps.length > 0) {
+            // Count only gap ranges
+            let total = 0;
+            for (const gap of gaps) {
+              const url = `https://api.github.com/repos/${repo.owner}/${repo.name}/commits?since=${new Date(gap.start).toISOString()}&until=${new Date(gap.end).toISOString()}&per_page=1`;
+              const response = await fetch(url, { headers });
+              if (!response.ok) continue;
+              const linkHeader = response.headers.get('link');
+              if (!linkHeader) {
+                const body = await response.json();
+                total += Array.isArray(body) ? body.length : 0;
+              } else {
+                const match = linkHeader.match(/page=(\d+)>;\s*rel="last"/);
+                total += match ? parseInt(match[1], 10) : 1;
+              }
+            }
+            return total;
+          }
+
+          const url = `https://api.github.com/repos/${repo.owner}/${repo.name}/commits?since=${startDate.toISOString()}&until=${endDate.toISOString()}&per_page=1`;
+          const response = await fetch(url, { headers });
+          if (!response.ok) return 0;
+          const linkHeader = response.headers.get('link');
+          if (!linkHeader) {
+            const body = await response.json();
+            return Array.isArray(body) ? body.length : 0;
+          }
+          const match = linkHeader.match(/page=(\d+)>;\s*rel="last"/);
+          return match ? parseInt(match[1], 10) : 1;
+        })
+      );
+      totalCommitsEstimate = counts.reduce((sum, c) => sum + c, 0) + allCommits.length;
+    } catch (err) {
+      console.warn('Failed to count commits:', err);
+    }
+  } else {
+    // All repos fully cached — skip counting phase
+    totalCommitsEstimate = allCommits.length;
+  }
+
+  // Phase 2: Fetch commits from repos that need fetching (3 concurrent workers)
   const activeRepoNames = new Set<string>();
-  let completedRepos = 0;
+  let completedRepos = repositories.length - reposToFetch.length;
 
   const emitFetchProgress = () => {
     onProgress?.({
@@ -891,50 +976,68 @@ export async function fetchCommitDataClient(
     });
   };
 
-  await runWithConcurrency(repositories, 3, async (repository) => {
-    activeRepoNames.add(repository.displayName);
-    emitFetchProgress();
+  if (reposToFetch.length > 0) {
+    await runWithConcurrency(reposToFetch, 3, async (repository) => {
+      activeRepoNames.add(repository.displayName);
+      emitFetchProgress();
 
-    try {
-      let page = 1;
-      let hasMore = true;
+      const repoKey = `${repository.owner}/${repository.name}`;
+      const gaps = repoGaps.get(repoKey);
 
-      while (hasMore) {
-        const url = `https://api.github.com/repos/${repository.owner}/${repository.name}/commits?since=${startDate.toISOString()}&until=${endDate.toISOString()}&per_page=100&page=${page}`;
+      // Determine date ranges to fetch
+      const ranges = gaps && gaps.length > 0
+        ? gaps.map(g => ({ since: new Date(g.start), until: new Date(g.end) }))
+        : [{ since: startDate, until: endDate }];
 
-        const response = await fetch(url, { headers });
+      // Track SHAs already loaded from cache to avoid duplicates
+      const existingSHAs = new Set(allCommits.filter(c => c.repository === repository.displayName).map(c => c.sha));
 
-        if (!response.ok) {
-          console.warn(`GitHub API error for ${repository.name}:`, response.status);
-          break;
-        }
+      for (const range of ranges) {
+        try {
+          let page = 1;
+          let hasMore = true;
 
-        const commits: GitHubCommit[] = await response.json();
+          while (hasMore) {
+            const url = `https://api.github.com/repos/${repository.owner}/${repository.name}/commits?since=${range.since.toISOString()}&until=${range.until.toISOString()}&per_page=100&page=${page}`;
 
-        const commitsWithRepo = commits.map(commit => ({
-          ...commit,
-          repository: repository.displayName
-        }));
+            const response = await fetch(url, { headers });
 
-        allCommits.push(...commitsWithRepo);
-        emitFetchProgress();
+            if (!response.ok) {
+              console.warn(`GitHub API error for ${repository.name}:`, response.status);
+              break;
+            }
 
-        const linkHeader = response.headers.get('link');
-        hasMore = linkHeader ? linkHeader.includes('rel="next"') : false;
-        page++;
+            const commits: GitHubCommit[] = await response.json();
 
-        if (page > 500) {
-          break;
+            const commitsWithRepo = commits
+              .filter(c => !existingSHAs.has(c.sha))
+              .map(commit => ({
+                ...commit,
+                repository: repository.displayName
+              }));
+
+            for (const c of commitsWithRepo) existingSHAs.add(c.sha);
+            allCommits.push(...commitsWithRepo);
+            emitFetchProgress();
+
+            const linkHeader = response.headers.get('link');
+            hasMore = linkHeader ? linkHeader.includes('rel="next"') : false;
+            page++;
+
+            if (page > 500) {
+              break;
+            }
+          }
+        } catch (err) {
+          console.warn(`Failed to fetch commits for ${repository.name}:`, err);
         }
       }
-    } catch (err) {
-      console.warn(`Failed to fetch commits for ${repository.name}:`, err);
-    }
 
-    activeRepoNames.delete(repository.displayName);
-    completedRepos++;
-    emitFetchProgress();
-  });
+      activeRepoNames.delete(repository.displayName);
+      completedRepos++;
+      emitFetchProgress();
+    });
+  }
 
   onProgress?.({
     completedRepos: repositories.length,
@@ -946,39 +1049,69 @@ export async function fetchCommitDataClient(
   });
 
   // Phase 3: Fetch PR label data
-  onProgress?.({
-    completedRepos: repositories.length,
-    totalRepos: repositories.length,
-    activeRepos: [],
-    commitsFetched: allCommits.length,
-    totalCommitsEstimate,
-    phase: 'fetching-prs',
+  // Check which repos have full PR label cache coverage
+  let prResults: PRLabelResult[] = [];
+
+  // Collect cached PR labels
+  if (cachedData?.prLabels) {
+    for (const repoKey of Object.keys(cachedData.prLabels)) {
+      const coverage = cachedData.coverage?.[repoKey];
+      if (coverage && coverage.prLabels.gaps.length === 0) {
+        // Full hit — use cached PR labels
+        const cachedItems = cachedData.prLabels[repoKey] || [];
+        prResults.push(...cachedItems.map(item => ({
+          sha: item.sha,
+          username: item.username,
+          aiTool: item.aiTool as AITool,
+          repo: item.repo,
+          date: item.date,
+        })));
+      }
+    }
+  }
+
+  // Determine which repos still need PR label scanning
+  const prLabelReposToFetch = repositories.filter(repo => {
+    const repoKey = `${repo.owner}/${repo.name}`;
+    const coverage = cachedData?.coverage?.[repoKey];
+    return !coverage || coverage.prLabels.gaps.length > 0;
   });
 
-  let prResults: PRLabelResult[] = [];
-  try {
-    prResults = await fetchAILabeledPRs(
-      token,
-      repositories,
-      startDate,
-      endDate,
-      (prProgress) => {
-        onProgress?.({
-          completedRepos: repositories.length,
-          totalRepos: repositories.length,
-          activeRepos: [
-            prProgress.status ||
-            `${prProgress.currentRepo}: label ${prProgress.completedLabels}/${prProgress.totalLabels} (${prProgress.prsFound} PRs found)`
-          ],
-          commitsFetched: allCommits.length,
-          totalCommitsEstimate,
-          phase: 'fetching-prs',
-        });
-      },
-      labelConfig,
-    );
-  } catch (err) {
-    console.error('Failed to fetch AI-labeled PRs:', err);
+  if (prLabelReposToFetch.length > 0) {
+    onProgress?.({
+      completedRepos: repositories.length,
+      totalRepos: repositories.length,
+      activeRepos: [],
+      commitsFetched: allCommits.length,
+      totalCommitsEstimate,
+      phase: 'fetching-prs',
+    });
+
+    try {
+      const freshPRResults = await fetchAILabeledPRs(
+        token,
+        prLabelReposToFetch,
+        startDate,
+        endDate,
+        (prProgress) => {
+          onProgress?.({
+            completedRepos: repositories.length,
+            totalRepos: repositories.length,
+            activeRepos: [
+              prProgress.status ||
+              `${prProgress.currentRepo}: label ${prProgress.completedLabels}/${prProgress.totalLabels} (${prProgress.prsFound} PRs found)`
+            ],
+            commitsFetched: allCommits.length,
+            totalCommitsEstimate,
+            phase: 'fetching-prs',
+          });
+        },
+        labelConfig,
+      );
+      prResults.push(...freshPRResults);
+    } catch (err) {
+      console.error('Failed to fetch AI-labeled PRs:', err);
+    }
   }
 
   // Store raw data in cache for future subset queries
@@ -992,7 +1125,8 @@ export async function fetchCommitDataClient(
     repositories,
   };
 
-  return analyzeCommits(allCommits, prResults, repositories);
+  const result = analyzeCommits(allCommits, prResults, repositories);
+  return Object.assign(result, { _rawCommits: allCommits, _rawPRResults: prResults });
 }
 
 
@@ -1017,7 +1151,7 @@ function computePercentiles(values: number[]): PercentileStats {
   };
 }
 
-function categorizePR(
+export function categorizePR(
   prAuthor: string,
   commitSHAs: string[],
   commitMessages: string[],
@@ -1096,7 +1230,7 @@ function computeBucketMetrics(prs: PRMetricsRaw[]): BucketMetrics {
   };
 }
 
-const PR_CAP = 3000;
+const PR_CAP = 20000;
 
 /**
  * Batch-fetch PR details using GitHub GraphQL API.
@@ -1230,6 +1364,39 @@ async function fetchPRDetailsBatchGraphQL(
 /**
  * Fetch productivity metrics from merged PRs, categorized into human/ai-assisted/agent buckets.
  */
+export interface CachedPRDetailInput {
+  number: number;
+  repo: string;
+  author: string;
+  title: string;
+  mergedAt: string;
+  firstCommitDate: string;
+  additions: number;
+  deletions: number;
+  reviewRounds: number;
+  reviewComments: number;
+  isRevert: boolean;
+  commitSHAs: string[];
+  commitMessages: string[];
+}
+
+export interface CachedMergedPRInput {
+  number: number;
+  repoOwner: string;
+  repoName: string;
+  repoDisplayName: string;
+  author: string;
+  title: string;
+  body: string;
+  mergedAt: string;
+}
+
+export interface ProductivityCacheInput {
+  prDetails?: Map<string, CachedPRDetailInput>;
+  mergedPRs?: Record<string, CachedMergedPRInput[]>;
+  coverage?: Record<string, { mergedPRs: { gaps: Array<{ start: string; end: string }> } }>;
+}
+
 export async function fetchProductivityMetrics(
   token: string,
   repositories: Repository[],
@@ -1237,6 +1404,9 @@ export async function fetchProductivityMetrics(
   aiCommitSHAs: Set<string>,
   agentUsernames: Set<string>,
   onProgress?: (progress: ProductivityFetchProgress) => void,
+  cachedPRDetails?: Map<string, CachedPRDetailInput>,
+  boostLookbackDays: number = 90,
+  cachedProductivity?: ProductivityCacheInput,
 ): Promise<ProductivityMetrics> {
   const headers: HeadersInit = {
     'Accept': 'application/vnd.github.v3+json',
@@ -1246,6 +1416,11 @@ export async function fetchProductivityMetrics(
   const startDate = dateRange.start;
   const endDate = dateRange.end;
 
+  // For the AI Productivity Boost card, we need "before" data for engineers
+  // who adopted AI near the start of the date range. Fetch extra lookback PRs.
+  const lookbackStart = new Date(startDate);
+  lookbackStart.setDate(lookbackStart.getDate() - boostLookbackDays);
+
   // Phase 1: List merged PRs per repo
   const allPRs: Array<{
     number: number;
@@ -1254,10 +1429,46 @@ export async function fetchProductivityMetrics(
     title: string;
     body: string;
     mergedAt: string;
+    isLookback: boolean;
   }> = [];
 
+  // Load cached merged PR listings
+  const reposToListPRs: Repository[] = [];
+  const repoMergedPRGaps = new Map<string, Array<{ start: string; end: string }>>();
+  for (const repo of repositories) {
+    const repoKey = `${repo.owner}/${repo.name}`;
+    const coverage = cachedProductivity?.coverage?.[repoKey];
+    const cached = cachedProductivity?.mergedPRs?.[repoKey];
+
+    // Always load cached items if available
+    if (cached) {
+      const seenNumbers = new Set<number>();
+      for (const pr of cached) {
+        if (seenNumbers.has(pr.number)) continue;
+        seenNumbers.add(pr.number);
+        const mergedDate = new Date(pr.mergedAt);
+        allPRs.push({
+          number: pr.number,
+          repo: { owner: pr.repoOwner, name: pr.repoName, displayName: pr.repoDisplayName },
+          author: pr.author,
+          title: pr.title,
+          body: pr.body,
+          mergedAt: pr.mergedAt,
+          isLookback: mergedDate < startDate,
+        });
+      }
+    }
+
+    if (!coverage || coverage.mergedPRs.gaps.length > 0) {
+      reposToListPRs.push(repo);
+      if (coverage) {
+        repoMergedPRGaps.set(repoKey, coverage.mergedPRs.gaps);
+      }
+    }
+  }
+
   const activeRepoNames = new Set<string>();
-  let completedRepos = 0;
+  let completedRepos = repositories.length - reposToListPRs.length;
 
   const emitListProgress = () => {
     onProgress?.({
@@ -1272,71 +1483,139 @@ export async function fetchProductivityMetrics(
 
   emitListProgress();
 
-  await runWithConcurrency(repositories, 5, async (repo) => {
-    activeRepoNames.add(repo.displayName);
-    emitListProgress();
+  // Track existing PR numbers per repo to dedup with cached
+  const existingPRKeys = new Set(allPRs.map(pr => `${pr.repo.owner}/${pr.repo.name}#${pr.number}`));
 
-    let page = 1;
-    let hasMore = true;
+  if (reposToListPRs.length > 0) {
+    // Track search API calls for rate limiting (30/min for search)
+    let searchTimestamps: number[] = [];
+    const throttleSearch = async () => {
+      const now = Date.now();
+      searchTimestamps = searchTimestamps.filter(t => now - t < 60000);
+      if (searchTimestamps.length >= 28) {
+        const oldest = searchTimestamps[0];
+        const waitMs = 60000 - (now - oldest) + 1000;
+        if (waitMs > 0) await new Promise(r => setTimeout(r, waitMs));
+      }
+      searchTimestamps.push(Date.now());
+    };
 
-    while (hasMore) {
-      const url = `https://api.github.com/repos/${repo.owner}/${repo.name}/pulls?state=closed&sort=updated&direction=desc&per_page=100&page=${page}`;
-      const response = await fetch(url, { headers });
+    // Use Search API — returns only merged PRs in date range, much more efficient.
+    // Search API caps at 1000 results per query, so split large ranges into monthly chunks.
 
-      if (!response.ok) {
-        // Rate limit handling
+    // Helper: search one date range for a repo
+    const searchMergedPRs = async (repo: Repository, rangeStart: string, rangeEnd: string) => {
+      let page = 1;
+      let hasMore = true;
+
+      while (hasMore) {
+        const q = encodeURIComponent(
+          `repo:${repo.owner}/${repo.name} is:pr is:merged merged:${rangeStart}..${rangeEnd}`
+        );
+        const url = `https://api.github.com/search/issues?q=${q}&per_page=100&page=${page}&sort=updated&order=desc`;
+
+        await throttleSearch();
+        let response = await fetch(url, { headers });
+
+        // Rate limit retry
         if (response.status === 403 || response.status === 429) {
-          const remaining = response.headers.get('x-ratelimit-remaining');
-          if (remaining && parseInt(remaining, 10) <= 0) {
-            const resetHeader = response.headers.get('x-ratelimit-reset');
-            const waitMs = resetHeader
-              ? Math.max(0, parseInt(resetHeader, 10) * 1000 - Date.now()) + 1000
-              : 10000;
-            await new Promise(resolve => setTimeout(resolve, Math.min(waitMs, 60000)));
-            continue; // retry this page
+          const retryAfter = response.headers.get('retry-after');
+          const resetHeader = response.headers.get('x-ratelimit-reset');
+          let waitMs = 10000;
+          if (retryAfter) {
+            waitMs = parseInt(retryAfter, 10) * 1000;
+          } else if (resetHeader) {
+            waitMs = Math.max(0, parseInt(resetHeader, 10) * 1000 - Date.now()) + 1000;
           }
+          await new Promise(r => setTimeout(r, Math.min(waitMs, 60000)));
+          response = await fetch(url, { headers });
         }
-        console.warn(`GitHub API error listing PRs for ${repo.name}:`, response.status);
-        break;
+
+        if (!response.ok) {
+          console.warn(`Search API error listing PRs for ${repo.name}:`, response.status);
+          break;
+        }
+
+        const data = await response.json();
+        const items = data.items || [];
+
+        for (const pr of items) {
+          const mergedAt = pr.pull_request?.merged_at;
+          if (!mergedAt) continue;
+
+          const prKey = `${repo.owner}/${repo.name}#${pr.number}`;
+          if (existingPRKeys.has(prKey)) continue;
+          existingPRKeys.add(prKey);
+
+          const mergedDate = new Date(mergedAt);
+
+          allPRs.push({
+            number: pr.number,
+            repo,
+            author: pr.user?.login || '',
+            title: pr.title || '',
+            body: pr.body || '',
+            mergedAt,
+            isLookback: mergedDate < startDate,
+          });
+        }
+
+        emitListProgress();
+
+        hasMore = items.length === 100;
+        page++;
+        if (page > 10) break; // Search API max 1000 results per query
       }
+    };
 
-      const prs = await response.json();
-
-      let foundOlder = false;
-      for (const pr of prs) {
-        if (!pr.merged_at) continue;
-
-        const mergedDate = new Date(pr.merged_at);
-        if (mergedDate < startDate) {
-          foundOlder = true;
-          continue;
-        }
-        if (mergedDate > endDate) continue;
-
-        allPRs.push({
-          number: pr.number,
-          repo,
-          author: pr.user?.login || '',
-          title: pr.title || '',
-          body: pr.body || '',
-          mergedAt: pr.merged_at,
+    // Build monthly date chunks to avoid 1000 result cap
+    const buildMonthlyChunks = (from: Date, to: Date): Array<{ start: string; end: string }> => {
+      const chunks: Array<{ start: string; end: string }> = [];
+      const cursor = new Date(from);
+      cursor.setDate(1); // start of month
+      while (cursor < to) {
+        const chunkStart = new Date(Math.max(cursor.getTime(), from.getTime()));
+        const nextMonth = new Date(cursor);
+        nextMonth.setMonth(nextMonth.getMonth() + 1);
+        const chunkEnd = new Date(Math.min(nextMonth.getTime(), to.getTime()));
+        chunks.push({
+          start: chunkStart.toISOString().split('T')[0],
+          end: chunkEnd.toISOString().split('T')[0],
         });
+        cursor.setMonth(cursor.getMonth() + 1);
       }
+      return chunks;
+    };
 
+    await runWithConcurrency(reposToListPRs, 3, async (repo) => {
+      activeRepoNames.add(repo.displayName);
       emitListProgress();
 
-      if (foundOlder || prs.length < 100) {
-        hasMore = false;
-      } else {
-        page++;
-        if (page > 50) break;
-      }
-    }
+      const repoKey = `${repo.owner}/${repo.name}`;
+      const gaps = repoMergedPRGaps.get(repoKey);
 
-    activeRepoNames.delete(repo.displayName);
-    completedRepos++;
-    emitListProgress();
-  });
+      // Only fetch the gap ranges (not the full lookback range)
+      const ranges = gaps && gaps.length > 0
+        ? gaps.map(g => ({ start: g.start.split('T')[0], end: g.end.split('T')[0] }))
+        : [{ start: lookbackStart.toISOString().split('T')[0], end: endDate.toISOString().split('T')[0] }];
+
+      for (const range of ranges) {
+        const rangeDays = (new Date(range.end).getTime() - new Date(range.start).getTime()) / (1000 * 60 * 60 * 24);
+        if (rangeDays > 90) {
+          const chunks = buildMonthlyChunks(new Date(range.start), new Date(range.end));
+          for (const chunk of chunks) {
+            await searchMergedPRs(repo, chunk.start, chunk.end);
+          }
+        } else {
+          await searchMergedPRs(repo, range.start, range.end);
+        }
+      }
+
+      activeRepoNames.delete(repo.displayName);
+      completedRepos++;
+      emitListProgress();
+    });
+  }
 
   // Cap at PR_CAP (most recent)
   const wasCapped = allPRs.length > PR_CAP;
@@ -1356,90 +1635,160 @@ export async function fetchProductivityMetrics(
   }
 
   // Phase 2: Batch-fetch PR details via GraphQL (10 PRs per query)
-  const BATCH_SIZE = 10;
-  let completedDetails = 0;
+  // Split PRs into cached vs uncached
   const prMetrics: PRMetricsRaw[] = [];
+  const uncachedPRs: typeof cappedPRs = [];
+  const newPRDetailsForCache: Record<string, CachedPRDetailInput> = {};
 
-  onProgress?.({ phase: 'fetching-details', completedPRs: 0, totalPRs });
+  for (const pr of cappedPRs) {
+    const key = `${pr.repo.owner}/${pr.repo.name}#${pr.number}`;
+    const cached = cachedPRDetails?.get(key);
 
-  // Process in batches with concurrency 3 (= 30 PRs in-flight)
-  const batches: Array<typeof cappedPRs> = [];
-  for (let i = 0; i < cappedPRs.length; i += BATCH_SIZE) {
-    batches.push(cappedPRs.slice(i, i + BATCH_SIZE));
+    if (cached) {
+      // Re-derive category from current aiCommitSHAs/agentUsernames
+      const category = categorizePR(cached.author, cached.commitSHAs, cached.commitMessages, aiCommitSHAs, agentUsernames);
+      prMetrics.push({
+        number: cached.number,
+        repo: cached.repo,
+        author: cached.author,
+        title: cached.title,
+        mergedAt: cached.mergedAt,
+        firstCommitDate: cached.firstCommitDate,
+        additions: cached.additions,
+        deletions: cached.deletions,
+        reviewRounds: cached.reviewRounds,
+        reviewComments: cached.reviewComments,
+        isRevert: cached.isRevert,
+        category,
+        isLookback: pr.isLookback,
+      });
+    } else {
+      uncachedPRs.push(pr);
+    }
   }
 
-  await runWithConcurrency(batches, 5, async (batch) => {
-    let detailsMap: Map<string, {
-      additions: number;
-      deletions: number;
-      reviewComments: number;
-      firstCommitDate: string | null;
-      commitSHAs: string[];
-      commitMessages: string[];
-      reviewRounds: number;
-    }>;
+  const BATCH_SIZE = 10;
+  let completedDetails = prMetrics.length;
 
-    try {
-      detailsMap = await fetchPRDetailsBatchGraphQL(token, batch);
-    } catch (err) {
-      console.warn('GraphQL batch failed, skipping batch:', err);
-      completedDetails += batch.length;
+  onProgress?.({ phase: 'fetching-details', completedPRs: completedDetails, totalPRs });
+
+  if (uncachedPRs.length > 0) {
+    const batches: Array<typeof uncachedPRs> = [];
+    for (let i = 0; i < uncachedPRs.length; i += BATCH_SIZE) {
+      batches.push(uncachedPRs.slice(i, i + BATCH_SIZE));
+    }
+
+    await runWithConcurrency(batches, 5, async (batch) => {
+      let detailsMap: Map<string, {
+        additions: number;
+        deletions: number;
+        reviewComments: number;
+        firstCommitDate: string | null;
+        commitSHAs: string[];
+        commitMessages: string[];
+        reviewRounds: number;
+      }>;
+
+      try {
+        detailsMap = await fetchPRDetailsBatchGraphQL(token, batch);
+      } catch (err) {
+        console.warn('GraphQL batch failed, skipping batch:', err);
+        completedDetails += batch.length;
+        onProgress?.({ phase: 'fetching-details', completedPRs: completedDetails, totalPRs });
+        return;
+      }
+
+      for (const pr of batch) {
+        const key = `${pr.repo.owner}/${pr.repo.name}#${pr.number}`;
+        const details = detailsMap.get(key);
+
+        const additions = details?.additions || 0;
+        const deletions = details?.deletions || 0;
+        const reviewComments = details?.reviewComments || 0;
+        const firstCommitDate = details?.firstCommitDate || pr.mergedAt;
+        const commitSHAs = details?.commitSHAs || [];
+        const commitMessages = details?.commitMessages || [];
+        const reviewRounds = details?.reviewRounds || 0;
+
+        const isRevert = /^Revert ".+"/.test(pr.title) ||
+          (!!pr.body && pr.body.includes('This reverts commit'));
+
+        const category = categorizePR(pr.author, commitSHAs, commitMessages, aiCommitSHAs, agentUsernames);
+
+        prMetrics.push({
+          number: pr.number,
+          repo: pr.repo.displayName,
+          author: pr.author,
+          title: pr.title,
+          mergedAt: pr.mergedAt,
+          firstCommitDate,
+          additions,
+          deletions,
+          reviewRounds,
+          reviewComments,
+          isRevert,
+          category,
+          isLookback: pr.isLookback,
+        });
+
+        // Track for disk cache (category excluded — re-derived at read time)
+        newPRDetailsForCache[key] = {
+          number: pr.number,
+          repo: pr.repo.displayName,
+          author: pr.author,
+          title: pr.title,
+          mergedAt: pr.mergedAt,
+          firstCommitDate,
+          additions,
+          deletions,
+          reviewRounds,
+          reviewComments,
+          isRevert,
+          commitSHAs,
+          commitMessages,
+        };
+
+        completedDetails++;
+      }
+
       onProgress?.({ phase: 'fetching-details', completedPRs: completedDetails, totalPRs });
-      return;
-    }
+    });
+  }
 
-    for (const pr of batch) {
-      const key = `${pr.repo.owner}/${pr.repo.name}#${pr.number}`;
-      const details = detailsMap.get(key);
-
-      const additions = details?.additions || 0;
-      const deletions = details?.deletions || 0;
-      const reviewComments = details?.reviewComments || 0;
-      const firstCommitDate = details?.firstCommitDate || pr.mergedAt;
-      const commitSHAs = details?.commitSHAs || [];
-      const commitMessages = details?.commitMessages || [];
-      const reviewRounds = details?.reviewRounds || 0;
-
-      const isRevert = /^Revert ".+"/.test(pr.title) ||
-        (!!pr.body && pr.body.includes('This reverts commit'));
-
-      const category = categorizePR(pr.author, commitSHAs, commitMessages, aiCommitSHAs, agentUsernames);
-
-      prMetrics.push({
-        number: pr.number,
-        repo: pr.repo.displayName,
-        author: pr.author,
-        title: pr.title,
-        mergedAt: pr.mergedAt,
-        firstCommitDate,
-        additions,
-        deletions,
-        reviewRounds,
-        reviewComments,
-        isRevert,
-        category,
-      });
-
-      completedDetails++;
-    }
-
-    onProgress?.({ phase: 'fetching-details', completedPRs: completedDetails, totalPRs });
-  });
-
-  // Phase 3: Compute metrics
+  // Phase 3: Compute metrics (exclude lookback PRs from main comparison)
   onProgress?.({ phase: 'computing', completedPRs: totalPRs, totalPRs });
 
-  const humanPRs = prMetrics.filter(pr => pr.category === 'human');
-  const aiAssistedPRs = prMetrics.filter(pr => pr.category === 'ai-assisted');
-  const agentPRs = prMetrics.filter(pr => pr.category === 'agent');
+  const inRangePRs = prMetrics.filter(pr => !pr.isLookback);
+  const humanPRs = inRangePRs.filter(pr => pr.category === 'human');
+  const aiAssistedPRs = inRangePRs.filter(pr => pr.category === 'ai-assisted');
+  const agentPRs = inRangePRs.filter(pr => pr.category === 'agent');
 
-  return {
+  const metricsResult: ProductivityMetrics = {
     human: computeBucketMetrics(humanPRs),
     aiAssisted: computeBucketMetrics(aiAssistedPRs),
     agent: computeBucketMetrics(agentPRs),
-    totalPRsAnalyzed: prMetrics.length,
-    prs: prMetrics,
+    totalPRsAnalyzed: inRangePRs.length,
+    prs: prMetrics, // full set including lookback for boost card
   };
+
+  // Build merged PR listing for cache
+  const _rawMergedPRs: Record<string, CachedMergedPRInput[]> = {};
+  for (const pr of allPRs) {
+    const repoKey = `${pr.repo.owner}/${pr.repo.name}`;
+    if (!_rawMergedPRs[repoKey]) _rawMergedPRs[repoKey] = [];
+    _rawMergedPRs[repoKey].push({
+      number: pr.number,
+      repoOwner: pr.repo.owner,
+      repoName: pr.repo.name,
+      repoDisplayName: pr.repo.displayName,
+      author: pr.author,
+      title: pr.title,
+      body: pr.body,
+      mergedAt: pr.mergedAt,
+    });
+  }
+
+  return Object.assign(metricsResult, { _newPRDetails: newPRDetailsForCache, _rawMergedPRs });
 }
 
 /**

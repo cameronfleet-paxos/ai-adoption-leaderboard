@@ -157,9 +157,11 @@ export function ProductivitySection({
     );
   }
 
+  const inRangePrs = metrics.prs.filter(pr => !pr.isLookback);
+
   return (
     <>
-      <ProductivityTrendsCard prs={metrics.prs} />
+      <ProductivityTrendsCard prs={inRangePrs} />
       <AIProductivityBoostCard prs={metrics.prs} />
       <Card className="mb-8">
         <CardHeader className="pb-4">
@@ -201,11 +203,11 @@ export function ProductivitySection({
         <CardContent>
               {wasCapped && (
                 <div className="mb-4 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg text-sm text-amber-800 dark:text-amber-200">
-                  Analysis capped at 3,000 most recent PRs. Narrow the date range for complete results.
+                  Analysis capped at 20,000 most recent PRs. Narrow the date range for complete results.
                 </div>
               )}
 
-              <ProductivityStatsCards metrics={metrics} prs={metrics.prs} />
+              <ProductivityStatsCards metrics={metrics} prs={inRangePrs} />
 
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <ProductivityComparisonChart

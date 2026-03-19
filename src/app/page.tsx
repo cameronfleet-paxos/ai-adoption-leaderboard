@@ -10,6 +10,7 @@ import { ProductivitySection } from '@/components/ProductivitySection';
 import { Header } from '@/components/Header';
 import { FilterBar } from '@/components/FilterBar';
 import { PRLabelConfig } from '@/components/PRLabelConfig';
+import { CacheSettings, getDiskCacheEnabled } from '@/components/CacheSettings';
 import { TokenAuth } from '@/components/TokenAuth';
 import { OAuthLogin } from '@/components/OAuthLogin';
 import { TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -24,6 +25,10 @@ import {
   type PRLabelConfig as PRLabelConfigType,
   type ProductivityMetrics,
   type ProductivityFetchProgress,
+  type CachedDataInput,
+  type CachedPRDetailInput,
+  type CachedMergedPRInput,
+  type ProductivityCacheInput,
   fetchCommitDataClient,
   fetchProductivityMetrics,
   getDefaultPRLabelConfig,
@@ -279,6 +284,23 @@ function HomeContent() {
 
     try {
       const reposToFetch = repositories.filter(repo => selectedRepos.includes(repo.name));
+      const repoKeys = reposToFetch.map(r => `${r.owner}/${r.name}`);
+      const startISO = new Date(dateRange.startDate).toISOString();
+      const endISO = new Date(dateRange.endDate).toISOString();
+
+      // Read disk cache (if enabled)
+      const cacheEnabled = getDiskCacheEnabled();
+      let cachedData: CachedDataInput | undefined;
+      if (cacheEnabled) {
+        try {
+          const cacheRes = await fetch(`/api/cache?repos=${repoKeys.join(',')}&start=${startISO}&end=${endISO}`);
+          if (cacheRes.ok) {
+            cachedData = await cacheRes.json();
+          }
+        } catch (e) {
+          console.warn('Failed to read disk cache:', e);
+        }
+      }
 
       const result = await fetchCommitDataClient(
         token,
@@ -289,10 +311,62 @@ function HomeContent() {
         },
         setProgress,
         labelConfig,
+        cachedData,
       );
 
       setData(result);
       setProgress(null);
+
+      // Write back to disk cache (fire-and-forget)
+      const rawResult = result as typeof result & { _rawCommits?: Array<{ sha: string; repository: string; commit: { author: { name: string; email: string; date: string }; message: string }; author: { login: string; avatar_url: string } | null }>; _rawPRResults?: Array<{ sha: string; username: string; aiTool: string; repo: string; date: string }> };
+      if (cacheEnabled && (rawResult._rawCommits || rawResult._rawPRResults)) {
+        const commitsByRepo: Record<string, Array<{ sha: string; repository: string; authorLogin: string | null; authorAvatarUrl: string | null; authorName: string; authorEmail: string; authorDate: string; message: string }>> = {};
+        const prLabelsByRepo: Record<string, Array<{ sha: string; username: string; aiTool: string; repo: string; date: string }>> = {};
+
+        // Build displayName -> repoKey map for O(1) lookups
+        const displayNameToRepoKey = new Map<string, string>();
+        for (const r of reposToFetch) {
+          displayNameToRepoKey.set(r.displayName, `${r.owner}/${r.name}`);
+        }
+
+        for (const c of rawResult._rawCommits || []) {
+          const repoKey = displayNameToRepoKey.get(c.repository);
+          if (!repoKey) continue;
+          if (!commitsByRepo[repoKey]) commitsByRepo[repoKey] = [];
+          commitsByRepo[repoKey].push({
+            sha: c.sha,
+            repository: c.repository,
+            authorLogin: c.author?.login || null,
+            authorAvatarUrl: c.author?.avatar_url || null,
+            authorName: c.commit.author.name,
+            authorEmail: c.commit.author.email,
+            authorDate: c.commit.author.date,
+            message: c.commit.message,
+          });
+        }
+
+        for (const pr of rawResult._rawPRResults || []) {
+          const repoKey = displayNameToRepoKey.get(pr.repo);
+          if (!repoKey) continue;
+          if (!prLabelsByRepo[repoKey]) prLabelsByRepo[repoKey] = [];
+          prLabelsByRepo[repoKey].push(pr);
+        }
+
+        const coverageExpansions = repoKeys.map(k => [
+          { repoKey: k, start: startISO, end: endISO, type: 'commits' as const },
+          { repoKey: k, start: startISO, end: endISO, type: 'prLabels' as const },
+        ]).flat();
+
+        fetch('/api/cache', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            commits: commitsByRepo,
+            prLabels: prLabelsByRepo,
+            coverageExpansions,
+          }),
+        }).catch(e => console.warn('Failed to write disk cache:', e));
+      }
     } catch (err) {
       console.error('Error fetching data:', err);
       setError(err instanceof Error ? err.message : 'Failed to fetch commit data');
@@ -329,6 +403,7 @@ function HomeContent() {
 
       try {
         const reposToFetch = repositories.filter(repo => selectedRepos.includes(repo.name));
+        const repoKeys = reposToFetch.map(r => `${r.owner}/${r.name}`);
 
         // Build sets for categorization from existing leaderboard data
         const aiCommitSHAs = new Set<string>();
@@ -342,6 +417,32 @@ function HomeContent() {
           }
         }
 
+        // Read cached productivity data (if cache enabled)
+        const prodCacheEnabled = getDiskCacheEnabled();
+        let cachedPRDetails: Map<string, CachedPRDetailInput> | undefined;
+        let cachedProductivity: ProductivityCacheInput | undefined;
+        if (prodCacheEnabled) {
+          try {
+            // Use lookback start for merged PR coverage (90 days before user's start)
+            const lookbackStart = new Date(dateRange.startDate);
+            lookbackStart.setDate(lookbackStart.getDate() - 90);
+            const cacheRes = await fetch(`/api/cache?repos=${repoKeys.join(',')}&start=${lookbackStart.toISOString()}&end=${new Date(dateRange.endDate).toISOString()}&prDetailKeys=`);
+            if (cacheRes.ok) {
+              const cacheData = await cacheRes.json();
+              if (cacheData.prDetails && Object.keys(cacheData.prDetails).length > 0) {
+                cachedPRDetails = new Map(Object.entries(cacheData.prDetails) as [string, CachedPRDetailInput][]);
+              }
+              cachedProductivity = {
+                prDetails: cachedPRDetails,
+                mergedPRs: cacheData.mergedPRs as Record<string, CachedMergedPRInput[]>,
+                coverage: cacheData.coverage as Record<string, { mergedPRs: { gaps: Array<{ start: string; end: string }> } }>,
+              };
+            }
+          } catch (e) {
+            console.warn('Failed to read productivity cache:', e);
+          }
+        }
+
         const result = await fetchProductivityMetrics(
           token,
           reposToFetch,
@@ -349,12 +450,46 @@ function HomeContent() {
           aiCommitSHAs,
           agentUsernames,
           (p) => { if (!cancelled) setProductivityProgress(p); },
+          cachedPRDetails,
+          90,
+          cachedProductivity,
         );
 
         if (!cancelled) {
           setProductivityMetrics(result);
           setProductivityProgress(null);
-          setProductivityWasCapped(result.totalPRsAnalyzed >= 3000);
+          setProductivityWasCapped(result.totalPRsAnalyzed >= 20000);
+
+          // Write productivity data to disk cache (fire-and-forget)
+          const rawResult = result as typeof result & {
+            _newPRDetails?: Record<string, CachedPRDetailInput>;
+            _rawMergedPRs?: Record<string, CachedMergedPRInput[]>;
+          };
+          if (prodCacheEnabled) {
+            const cacheBody: Record<string, unknown> = {};
+            if (rawResult._newPRDetails && Object.keys(rawResult._newPRDetails).length > 0) {
+              cacheBody.prDetails = rawResult._newPRDetails;
+            }
+            if (rawResult._rawMergedPRs && Object.keys(rawResult._rawMergedPRs).length > 0) {
+              cacheBody.mergedPRs = rawResult._rawMergedPRs;
+              // Expand merged PR coverage for all repos
+              const lookbackStart = new Date(dateRange.startDate);
+              lookbackStart.setDate(lookbackStart.getDate() - 90);
+              cacheBody.coverageExpansions = repoKeys.map(k => ({
+                repoKey: k,
+                start: lookbackStart.toISOString(),
+                end: new Date(dateRange.endDate).toISOString(),
+                type: 'mergedPRs',
+              }));
+            }
+            if (Object.keys(cacheBody).length > 0) {
+              fetch('/api/cache', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(cacheBody),
+              }).catch(e => console.warn('Failed to write productivity cache:', e));
+            }
+          }
         }
       } catch (err) {
         console.error('Failed to fetch productivity metrics:', err);
@@ -576,11 +711,14 @@ function HomeContent() {
 
       case 'settings':
         return (
+          <>
+          <CacheSettings />
           <PRLabelConfig
             labelConfig={labelConfig}
             onLabelConfigChange={handleLabelConfigChange}
             selectedRepos={selectedRepos}
           />
+          </>
         );
     }
   };
