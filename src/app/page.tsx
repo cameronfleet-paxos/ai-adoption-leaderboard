@@ -6,6 +6,7 @@ import { Leaderboard } from '@/components/Leaderboard';
 import { StatsCards } from '@/components/StatsCards';
 import { OverallActivityChart } from '@/components/OverallActivityChart';
 import { AnalyticsSection } from '@/components/AnalyticsSection';
+import { ProductivitySection } from '@/components/ProductivitySection';
 import { Header } from '@/components/Header';
 import { DateRangeSelector } from '@/components/DateRangeSelector';
 import { RepositorySelector } from '@/components/RepositorySelector';
@@ -20,7 +21,10 @@ import {
   type ClaudeModel,
   type FetchProgress,
   type PRLabelConfig as PRLabelConfigType,
+  type ProductivityMetrics,
+  type ProductivityFetchProgress,
   fetchCommitDataClient,
+  fetchProductivityMetrics,
   getDefaultPRLabelConfig,
 } from '@/lib/github-client';
 
@@ -45,6 +49,19 @@ function HomeContent() {
   const [repositories, setRepositories] = useState<Repository[]>([]);
   const [selectedRepos, setSelectedRepos] = useState<string[]>([]);
   const [hasMoreRepos, setHasMoreRepos] = useState(false);
+
+  // Productivity metrics state
+  const [productivityEnabled, setProductivityEnabled] = useState(() => {
+    if (typeof window === 'undefined') return true;
+    try {
+      const stored = localStorage.getItem('productivityEnabled');
+      return stored !== null ? JSON.parse(stored) : true;
+    } catch { return true; }
+  });
+  const [productivityMetrics, setProductivityMetrics] = useState<ProductivityMetrics | null>(null);
+  const [productivityProgress, setProductivityProgress] = useState<ProductivityFetchProgress | null>(null);
+  const [productivityLoading, setProductivityLoading] = useState(false);
+  const [productivityWasCapped, setProductivityWasCapped] = useState(false);
 
   const emptyToolBreakdown = useMemo<AIToolBreakdown>(() => ({
     'claude-coauthor': 0,
@@ -282,6 +299,75 @@ function HomeContent() {
     }
   }, [fetchData, isAuthenticated, selectedRepos.length]);
 
+  // Fetch productivity metrics after leaderboard data loads
+  useEffect(() => {
+    if (!productivityEnabled || !token || !isAuthenticated || selectedRepos.length === 0 || data.totalCommits === 0 || isLoading) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const run = async () => {
+      setProductivityLoading(true);
+      setProductivityMetrics(null);
+      setProductivityWasCapped(false);
+
+      try {
+        const reposToFetch = repositories.filter(repo => selectedRepos.includes(repo.name));
+
+        // Build sets for categorization from existing leaderboard data
+        const aiCommitSHAs = new Set<string>();
+        const agentUsernames = new Set<string>();
+        for (const entry of data.leaderboard) {
+          if (entry.username.endsWith('-agent[bot]')) {
+            agentUsernames.add(entry.username);
+          }
+          for (const commit of entry.commitDetails) {
+            aiCommitSHAs.add(commit.sha);
+          }
+        }
+
+        const result = await fetchProductivityMetrics(
+          token,
+          reposToFetch,
+          { start: new Date(dateRange.startDate), end: new Date(dateRange.endDate) },
+          aiCommitSHAs,
+          agentUsernames,
+          (p) => { if (!cancelled) setProductivityProgress(p); },
+        );
+
+        if (!cancelled) {
+          setProductivityMetrics(result);
+          setProductivityProgress(null);
+          // Check if capped (totalPRsAnalyzed === 500 suggests cap was hit)
+          setProductivityWasCapped(result.totalPRsAnalyzed >= 3000);
+        }
+      } catch (err) {
+        console.error('Failed to fetch productivity metrics:', err);
+      } finally {
+        if (!cancelled) {
+          setProductivityLoading(false);
+          setProductivityProgress(null);
+        }
+      }
+    };
+
+    run();
+    return () => { cancelled = true; };
+  }, [productivityEnabled, token, isAuthenticated, selectedRepos, repositories, data.totalCommits, data.leaderboard, dateRange.startDate, dateRange.endDate, isLoading]);
+
+  const handleProductivityToggle = useCallback((enabled: boolean) => {
+    setProductivityEnabled(enabled);
+    try {
+      localStorage.setItem('productivityEnabled', JSON.stringify(enabled));
+    } catch {}
+    if (!enabled) {
+      setProductivityMetrics(null);
+      setProductivityProgress(null);
+      setProductivityLoading(false);
+    }
+  }, []);
+
   const handleLogout = useCallback(async () => {
     // Clear server-side session if using OAuth
     if (isOAuthAvailable) {
@@ -389,6 +475,8 @@ function HomeContent() {
           onDateChange={handleDateChange}
           onRefresh={fetchData}
           isLoading={isLoading}
+          productivityEnabled={productivityEnabled}
+          onProductivityToggle={handleProductivityToggle}
         />
 
         {error && (
@@ -498,6 +586,16 @@ function HomeContent() {
               isLoading={isLoading}
               hasSelectedRepos={selectedRepos.length > 0}
             />
+
+            {productivityEnabled && (
+              <ProductivitySection
+                metrics={productivityMetrics}
+                isLoading={productivityLoading && !productivityProgress}
+                hasSelectedRepos={selectedRepos.length > 0}
+                progress={productivityProgress}
+                wasCapped={productivityWasCapped}
+              />
+            )}
 
             <Leaderboard
               data={data.leaderboard}

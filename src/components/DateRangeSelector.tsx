@@ -12,9 +12,11 @@ interface DateRangeSelectorProps {
   onDateChange: (startDate: string, endDate: string) => void;
   onRefresh: () => void;
   isLoading?: boolean;
+  productivityEnabled?: boolean;
+  onProductivityToggle?: (enabled: boolean) => void;
 }
 
-export function DateRangeSelector({ startDate, endDate, onDateChange, onRefresh, isLoading = false }: DateRangeSelectorProps) {
+export function DateRangeSelector({ startDate, endDate, onDateChange, onRefresh, isLoading = false, productivityEnabled, onProductivityToggle }: DateRangeSelectorProps) {
   const [activePreset, setActivePreset] = useState<string>('week');
 
   const handlePresetSelect = (preset: string) => {
@@ -130,24 +132,36 @@ export function DateRangeSelector({ startDate, endDate, onDateChange, onRefresh,
             />
           </div>
           
-          <Button
-            onClick={onRefresh}
-            disabled={isLoading}
-            variant="secondary"
-            className="ml-auto"
-          >
-            {isLoading ? (
-              <>
-                <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
-                Loading...
-              </>
-            ) : (
-              <>
-                <RefreshCw className="h-4 w-4 mr-2" />
-                Refresh Data
-              </>
+          <div className="flex items-center gap-4 ml-auto">
+            {onProductivityToggle !== undefined && (
+              <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer shrink-0">
+                <input
+                  type="checkbox"
+                  checked={productivityEnabled}
+                  onChange={(e) => onProductivityToggle(e.target.checked)}
+                  className="rounded border-muted-foreground/30"
+                />
+                Productivity
+              </label>
             )}
-          </Button>
+            <Button
+              onClick={onRefresh}
+              disabled={isLoading}
+              variant="secondary"
+            >
+              {isLoading ? (
+                <>
+                  <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                  Loading...
+                </>
+              ) : (
+                <>
+                  <RefreshCw className="h-4 w-4 mr-2" />
+                  Refresh Data
+                </>
+              )}
+            </Button>
+          </div>
         </div>
       </CardContent>
     </Card>

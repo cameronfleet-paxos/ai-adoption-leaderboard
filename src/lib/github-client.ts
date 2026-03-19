@@ -166,6 +166,70 @@ export interface LeaderboardData {
   leaderboard: LeaderboardEntry[];
 }
 
+// --- Productivity Metrics Types ---
+
+export type PRCategory = 'human' | 'ai-assisted' | 'agent';
+
+export interface PRMetricsRaw {
+  number: number;
+  repo: string;
+  author: string;
+  title: string;
+  mergedAt: string;
+  firstCommitDate: string;
+  additions: number;
+  deletions: number;
+  reviewRounds: number;
+  reviewComments: number;
+  isRevert: boolean;
+  category: PRCategory;
+}
+
+export interface ExtremePR {
+  value: number;
+  number: number;
+  repo: string;
+  title: string;
+}
+
+export interface PercentileStats {
+  p10: number;
+  p25: number;
+  median: number;
+  p75: number;
+  p90: number;
+  min?: ExtremePR;
+  max?: ExtremePR;
+}
+
+export interface BucketMetrics {
+  prCount: number;
+  cycleTime: PercentileStats;
+  prSize: PercentileStats;
+  reviewRounds: PercentileStats;
+  revertRate: number;
+  reviewComments: PercentileStats;
+}
+
+export interface ProductivityMetrics {
+  human: BucketMetrics;
+  aiAssisted: BucketMetrics;
+  agent: BucketMetrics;
+  totalPRsAnalyzed: number;
+  prs: PRMetricsRaw[];
+}
+
+export interface ProductivityFetchProgress {
+  phase: 'listing-prs' | 'fetching-details' | 'computing';
+  completedPRs: number;
+  totalPRs: number;
+  completedRepos?: number;
+  totalRepos?: number;
+  activeRepos?: string[];
+}
+
+// --- End Productivity Metrics Types ---
+
 interface GitHubCommit {
   sha: string;
   commit: {
@@ -663,7 +727,7 @@ async function fetchAILabeledPRs(
         }
 
         if (!response.ok) {
-          console.error(`Search API error for ${repo.name} label=${label}:`, response.status);
+          console.warn(`Search API error for ${repo.name} label=${label}:`, response.status);
           break; // skip remaining pages for this label, continue to next label
         }
 
@@ -808,7 +872,7 @@ export async function fetchCommitDataClient(
     );
     totalCommitsEstimate = counts.reduce((sum, c) => sum + c, 0);
   } catch (err) {
-    console.error('Failed to count commits:', err);
+    console.warn('Failed to count commits:', err);
     // Continue without estimate
   }
 
@@ -841,7 +905,7 @@ export async function fetchCommitDataClient(
         const response = await fetch(url, { headers });
 
         if (!response.ok) {
-          console.error(`GitHub API error for ${repository.name}:`, response.status);
+          console.warn(`GitHub API error for ${repository.name}:`, response.status);
           break;
         }
 
@@ -864,7 +928,7 @@ export async function fetchCommitDataClient(
         }
       }
     } catch (err) {
-      console.error(`Failed to fetch commits for ${repository.name}:`, err);
+      console.warn(`Failed to fetch commits for ${repository.name}:`, err);
     }
 
     activeRepoNames.delete(repository.displayName);
@@ -931,6 +995,452 @@ export async function fetchCommitDataClient(
   return analyzeCommits(allCommits, prResults, repositories);
 }
 
+
+// --- Productivity Metrics Helpers ---
+
+function computePercentiles(values: number[]): PercentileStats {
+  if (values.length === 0) return { p10: 0, p25: 0, median: 0, p75: 0, p90: 0 };
+  const sorted = [...values].sort((a, b) => a - b);
+  const percentile = (arr: number[], p: number) => {
+    const idx = (p / 100) * (arr.length - 1);
+    const lower = Math.floor(idx);
+    const upper = Math.ceil(idx);
+    if (lower === upper) return arr[lower];
+    return arr[lower] + (arr[upper] - arr[lower]) * (idx - lower);
+  };
+  return {
+    p10: percentile(sorted, 10),
+    p25: percentile(sorted, 25),
+    median: percentile(sorted, 50),
+    p75: percentile(sorted, 75),
+    p90: percentile(sorted, 90),
+  };
+}
+
+function categorizePR(
+  prAuthor: string,
+  commitSHAs: string[],
+  commitMessages: string[],
+  aiCommitSHAs: Set<string>,
+  agentUsernames: Set<string>,
+): PRCategory {
+  // Agent: PR author ends with -agent[bot] or is in agentUsernames
+  if (prAuthor.endsWith('-agent[bot]') || agentUsernames.has(prAuthor)) {
+    return 'agent';
+  }
+
+  // AI-assisted: any commit SHA is in aiCommitSHAs or detectAITool matches a commit message
+  for (const sha of commitSHAs) {
+    if (aiCommitSHAs.has(sha)) return 'ai-assisted';
+  }
+  for (const msg of commitMessages) {
+    if (detectAITool(msg) !== null) return 'ai-assisted';
+  }
+
+  return 'human';
+}
+
+function emptyBucketMetrics(): BucketMetrics {
+  return {
+    prCount: 0,
+    cycleTime: { p10: 0, p25: 0, median: 0, p75: 0, p90: 0 },
+    prSize: { p10: 0, p25: 0, median: 0, p75: 0, p90: 0 },
+    reviewRounds: { p10: 0, p25: 0, median: 0, p75: 0, p90: 0 },
+    revertRate: 0,
+    reviewComments: { p10: 0, p25: 0, median: 0, p75: 0, p90: 0 },
+  };
+}
+
+function findExtremes(values: number[], prs: PRMetricsRaw[]): { min: ExtremePR; max: ExtremePR } {
+  let minIdx = 0, maxIdx = 0;
+  for (let i = 1; i < values.length; i++) {
+    if (values[i] < values[minIdx]) minIdx = i;
+    if (values[i] > values[maxIdx]) maxIdx = i;
+  }
+  const toExtreme = (idx: number): ExtremePR => ({
+    value: values[idx],
+    number: prs[idx].number,
+    repo: prs[idx].repo,
+    title: prs[idx].title,
+  });
+  return { min: toExtreme(minIdx), max: toExtreme(maxIdx) };
+}
+
+function computeBucketMetrics(prs: PRMetricsRaw[]): BucketMetrics {
+  if (prs.length === 0) return emptyBucketMetrics();
+
+  const cycleTimes = prs.map(pr => {
+    const first = new Date(pr.firstCommitDate).getTime();
+    const merged = new Date(pr.mergedAt).getTime();
+    return Math.max(0, (merged - first) / (1000 * 60 * 60)); // hours
+  });
+
+  const sizes = prs.map(pr => pr.additions + pr.deletions);
+  const rounds = prs.map(pr => pr.reviewRounds);
+  const comments = prs.map(pr => pr.reviewComments);
+  const reverts = prs.filter(pr => pr.isRevert).length;
+
+  const withExtremes = (values: number[]): PercentileStats => {
+    const stats = computePercentiles(values);
+    const extremes = findExtremes(values, prs);
+    return { ...stats, min: extremes.min, max: extremes.max };
+  };
+
+  return {
+    prCount: prs.length,
+    cycleTime: withExtremes(cycleTimes),
+    prSize: withExtremes(sizes),
+    reviewRounds: withExtremes(rounds),
+    revertRate: prs.length > 0 ? Math.round((reverts / prs.length) * 1000) / 10 : 0,
+    reviewComments: withExtremes(comments),
+  };
+}
+
+const PR_CAP = 3000;
+
+/**
+ * Batch-fetch PR details using GitHub GraphQL API.
+ * Fetches additions, deletions, review comments, commits (first date + messages/SHAs),
+ * and reviews in a single request per batch of up to 10 PRs.
+ */
+async function fetchPRDetailsBatchGraphQL(
+  token: string,
+  prs: Array<{ number: number; repo: Repository }>,
+): Promise<Map<string, {
+  additions: number;
+  deletions: number;
+  reviewComments: number;
+  firstCommitDate: string | null;
+  commitSHAs: string[];
+  commitMessages: string[];
+  reviewRounds: number;
+}>> {
+  // Build a GraphQL query that fetches all PRs in one request
+  const fragments = prs.map((pr, i) => `
+    pr${i}: repository(owner: "${pr.repo.owner}", name: "${pr.repo.name}") {
+      pullRequest(number: ${pr.number}) {
+        additions
+        deletions
+        reviewThreads(first: 100) {
+          nodes {
+            comments { totalCount }
+          }
+        }
+        reviews(first: 50) {
+          nodes { state author { ... on User { __typename } ... on Bot { __typename } } }
+        }
+        commits(first: 100) {
+          nodes {
+            commit {
+              oid
+              message
+              authoredDate
+            }
+          }
+        }
+      }
+    }`).join('\n');
+
+  const query = `query { ${fragments} }`;
+
+  const response = await fetch('https://api.github.com/graphql', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ query }),
+  });
+
+  const results = new Map<string, {
+    additions: number;
+    deletions: number;
+    reviewComments: number;
+    firstCommitDate: string | null;
+    commitSHAs: string[];
+    commitMessages: string[];
+    reviewRounds: number;
+  }>();
+
+  if (!response.ok) {
+    console.warn('GraphQL API error:', response.status);
+    return results;
+  }
+
+  const json = await response.json();
+  if (json.errors) {
+    console.warn('GraphQL partial errors (some PRs may be inaccessible):', json.errors.length, 'errors');
+  }
+
+  const data = json.data || {};
+
+  for (let i = 0; i < prs.length; i++) {
+    const prData = data[`pr${i}`]?.pullRequest;
+    if (!prData) continue;
+
+    const key = `${prs[i].repo.owner}/${prs[i].repo.name}#${prs[i].number}`;
+
+    // Parse commits
+    const commitNodes = prData.commits?.nodes || [];
+    const commitSHAs: string[] = [];
+    const commitMessages: string[] = [];
+    let firstCommitDate: string | null = null;
+
+    if (commitNodes.length > 0) {
+      // Sort by date ascending
+      const sorted = [...commitNodes].sort((a: { commit: { authoredDate: string } }, b: { commit: { authoredDate: string } }) =>
+        new Date(a.commit.authoredDate).getTime() - new Date(b.commit.authoredDate).getTime()
+      );
+      firstCommitDate = sorted[0].commit.authoredDate;
+      for (const node of commitNodes) {
+        commitSHAs.push(node.commit.oid);
+        commitMessages.push(node.commit.message || '');
+      }
+    }
+
+    // Parse reviews — count CHANGES_REQUESTED + APPROVED, excluding bots/dismissed
+    let reviewRounds = 0;
+    const reviewNodes = prData.reviews?.nodes || [];
+    for (const review of reviewNodes) {
+      if (review.state === 'DISMISSED') continue;
+      if (review.author?.__typename === 'Bot') continue;
+      if (review.state === 'CHANGES_REQUESTED' || review.state === 'APPROVED') {
+        reviewRounds++;
+      }
+    }
+
+    results.set(key, {
+      additions: prData.additions || 0,
+      deletions: prData.deletions || 0,
+      reviewComments: (prData.reviewThreads?.nodes || []).reduce(
+        (sum: number, thread: { comments?: { totalCount?: number } }) =>
+          sum + (thread.comments?.totalCount || 0),
+        0,
+      ),
+      firstCommitDate,
+      commitSHAs,
+      commitMessages,
+      reviewRounds,
+    });
+  }
+
+  return results;
+}
+
+/**
+ * Fetch productivity metrics from merged PRs, categorized into human/ai-assisted/agent buckets.
+ */
+export async function fetchProductivityMetrics(
+  token: string,
+  repositories: Repository[],
+  dateRange: { start: Date; end: Date },
+  aiCommitSHAs: Set<string>,
+  agentUsernames: Set<string>,
+  onProgress?: (progress: ProductivityFetchProgress) => void,
+): Promise<ProductivityMetrics> {
+  const headers: HeadersInit = {
+    'Accept': 'application/vnd.github.v3+json',
+    'Authorization': `Bearer ${token}`,
+  };
+
+  const startDate = dateRange.start;
+  const endDate = dateRange.end;
+
+  // Phase 1: List merged PRs per repo
+  const allPRs: Array<{
+    number: number;
+    repo: Repository;
+    author: string;
+    title: string;
+    body: string;
+    mergedAt: string;
+  }> = [];
+
+  const activeRepoNames = new Set<string>();
+  let completedRepos = 0;
+
+  const emitListProgress = () => {
+    onProgress?.({
+      phase: 'listing-prs',
+      completedPRs: allPRs.length,
+      totalPRs: allPRs.length,
+      completedRepos,
+      totalRepos: repositories.length,
+      activeRepos: Array.from(activeRepoNames),
+    });
+  };
+
+  emitListProgress();
+
+  await runWithConcurrency(repositories, 5, async (repo) => {
+    activeRepoNames.add(repo.displayName);
+    emitListProgress();
+
+    let page = 1;
+    let hasMore = true;
+
+    while (hasMore) {
+      const url = `https://api.github.com/repos/${repo.owner}/${repo.name}/pulls?state=closed&sort=updated&direction=desc&per_page=100&page=${page}`;
+      const response = await fetch(url, { headers });
+
+      if (!response.ok) {
+        // Rate limit handling
+        if (response.status === 403 || response.status === 429) {
+          const remaining = response.headers.get('x-ratelimit-remaining');
+          if (remaining && parseInt(remaining, 10) <= 0) {
+            const resetHeader = response.headers.get('x-ratelimit-reset');
+            const waitMs = resetHeader
+              ? Math.max(0, parseInt(resetHeader, 10) * 1000 - Date.now()) + 1000
+              : 10000;
+            await new Promise(resolve => setTimeout(resolve, Math.min(waitMs, 60000)));
+            continue; // retry this page
+          }
+        }
+        console.warn(`GitHub API error listing PRs for ${repo.name}:`, response.status);
+        break;
+      }
+
+      const prs = await response.json();
+
+      let foundOlder = false;
+      for (const pr of prs) {
+        if (!pr.merged_at) continue;
+
+        const mergedDate = new Date(pr.merged_at);
+        if (mergedDate < startDate) {
+          foundOlder = true;
+          continue;
+        }
+        if (mergedDate > endDate) continue;
+
+        allPRs.push({
+          number: pr.number,
+          repo,
+          author: pr.user?.login || '',
+          title: pr.title || '',
+          body: pr.body || '',
+          mergedAt: pr.merged_at,
+        });
+      }
+
+      emitListProgress();
+
+      if (foundOlder || prs.length < 100) {
+        hasMore = false;
+      } else {
+        page++;
+        if (page > 50) break;
+      }
+    }
+
+    activeRepoNames.delete(repo.displayName);
+    completedRepos++;
+    emitListProgress();
+  });
+
+  // Cap at PR_CAP (most recent)
+  const wasCapped = allPRs.length > PR_CAP;
+  const cappedPRs = wasCapped
+    ? allPRs.sort((a, b) => new Date(b.mergedAt).getTime() - new Date(a.mergedAt).getTime()).slice(0, PR_CAP)
+    : allPRs;
+
+  const totalPRs = cappedPRs.length;
+  if (totalPRs === 0) {
+    return {
+      human: emptyBucketMetrics(),
+      aiAssisted: emptyBucketMetrics(),
+      agent: emptyBucketMetrics(),
+      totalPRsAnalyzed: 0,
+      prs: [],
+    };
+  }
+
+  // Phase 2: Batch-fetch PR details via GraphQL (10 PRs per query)
+  const BATCH_SIZE = 10;
+  let completedDetails = 0;
+  const prMetrics: PRMetricsRaw[] = [];
+
+  onProgress?.({ phase: 'fetching-details', completedPRs: 0, totalPRs });
+
+  // Process in batches with concurrency 3 (= 30 PRs in-flight)
+  const batches: Array<typeof cappedPRs> = [];
+  for (let i = 0; i < cappedPRs.length; i += BATCH_SIZE) {
+    batches.push(cappedPRs.slice(i, i + BATCH_SIZE));
+  }
+
+  await runWithConcurrency(batches, 5, async (batch) => {
+    let detailsMap: Map<string, {
+      additions: number;
+      deletions: number;
+      reviewComments: number;
+      firstCommitDate: string | null;
+      commitSHAs: string[];
+      commitMessages: string[];
+      reviewRounds: number;
+    }>;
+
+    try {
+      detailsMap = await fetchPRDetailsBatchGraphQL(token, batch);
+    } catch (err) {
+      console.warn('GraphQL batch failed, skipping batch:', err);
+      completedDetails += batch.length;
+      onProgress?.({ phase: 'fetching-details', completedPRs: completedDetails, totalPRs });
+      return;
+    }
+
+    for (const pr of batch) {
+      const key = `${pr.repo.owner}/${pr.repo.name}#${pr.number}`;
+      const details = detailsMap.get(key);
+
+      const additions = details?.additions || 0;
+      const deletions = details?.deletions || 0;
+      const reviewComments = details?.reviewComments || 0;
+      const firstCommitDate = details?.firstCommitDate || pr.mergedAt;
+      const commitSHAs = details?.commitSHAs || [];
+      const commitMessages = details?.commitMessages || [];
+      const reviewRounds = details?.reviewRounds || 0;
+
+      const isRevert = /^Revert ".+"/.test(pr.title) ||
+        (!!pr.body && pr.body.includes('This reverts commit'));
+
+      const category = categorizePR(pr.author, commitSHAs, commitMessages, aiCommitSHAs, agentUsernames);
+
+      prMetrics.push({
+        number: pr.number,
+        repo: pr.repo.displayName,
+        author: pr.author,
+        title: pr.title,
+        mergedAt: pr.mergedAt,
+        firstCommitDate,
+        additions,
+        deletions,
+        reviewRounds,
+        reviewComments,
+        isRevert,
+        category,
+      });
+
+      completedDetails++;
+    }
+
+    onProgress?.({ phase: 'fetching-details', completedPRs: completedDetails, totalPRs });
+  });
+
+  // Phase 3: Compute metrics
+  onProgress?.({ phase: 'computing', completedPRs: totalPRs, totalPRs });
+
+  const humanPRs = prMetrics.filter(pr => pr.category === 'human');
+  const aiAssistedPRs = prMetrics.filter(pr => pr.category === 'ai-assisted');
+  const agentPRs = prMetrics.filter(pr => pr.category === 'agent');
+
+  return {
+    human: computeBucketMetrics(humanPRs),
+    aiAssisted: computeBucketMetrics(aiAssistedPRs),
+    agent: computeBucketMetrics(agentPRs),
+    totalPRsAnalyzed: prMetrics.length,
+    prs: prMetrics,
+  };
+}
 
 /**
  * Fetch user info from GitHub API
