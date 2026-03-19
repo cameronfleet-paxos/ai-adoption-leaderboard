@@ -132,11 +132,19 @@ export function ProductivityTrendsCard({ prs }: ProductivityTrendsCardProps) {
     });
 
     const volumeData = sortedKeys.map(k => toPoint(k, (cat, b) => b.counts[cat] || null, b => b.totalCount || null));
+    // For PRs/dev, exclude infrequent contributors (< 2 PRs in the period)
+    // Count PRs per author across all buckets
+    const authorPRCounts = new Map<string, number>();
+    for (const pr of prs) {
+      authorPRCounts.set(pr.author, (authorPRCounts.get(pr.author) || 0) + 1);
+    }
+    const activeAuthors = new Set([...authorPRCounts.entries()].filter(([, count]) => count >= 2).map(([author]) => author));
+
     const throughputData = sortedKeys.map(k => toPoint(k, (cat, b) => {
-      const authors = b.authors[cat].size;
+      const authors = [...b.authors[cat]].filter(a => activeAuthors.has(a)).length;
       return authors > 0 ? Math.round((b.counts[cat] / authors) * 10) / 10 : null;
     }, b => {
-      const authors = b.allAuthors.size;
+      const authors = [...b.allAuthors].filter(a => activeAuthors.has(a)).length;
       return authors > 0 ? Math.round((b.totalCount / authors) * 10) / 10 : null;
     }));
     const cycleTimeData = sortedKeys.map(k => toPoint(k, (cat, b) => median(b.cycleTimes[cat]), b => median(b.allCycleTimes)));
