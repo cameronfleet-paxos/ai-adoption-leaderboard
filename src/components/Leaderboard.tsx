@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { ChevronDown, ChevronRight, ExternalLink, Trophy, Medal, Award, Zap, Calendar, GitCommit, ArrowUp, ArrowDown, BarChart3, Filter } from 'lucide-react';
+import { ChevronDown, ChevronRight, ExternalLink, Trophy, Medal, Award, Zap, Calendar, GitCommit, ArrowUp, ArrowDown, BarChart3 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -33,45 +33,25 @@ interface LeaderboardEntry {
   claudeModelBreakdown: ClaudeModelBreakdown;
 }
 
+import type { ToolFilter } from '@/lib/tool-filter';
+
 interface LeaderboardProps {
   data: LeaderboardEntry[];
   isLoading: boolean;
   hasSelectedRepos?: boolean;
+  toolFilter?: ToolFilter;
 }
 
 type SortField = 'commits' | 'aiPercentage';
 type SortDirection = 'asc' | 'desc';
 
-type ToolFilter = 'all' | 'claude' | 'agents' | AITool;
-
 const CLAUDE_TOOLS: AITool[] = ['claude-coauthor', 'claude-generated'];
 
-export function Leaderboard({ data, isLoading, hasSelectedRepos = true }: LeaderboardProps) {
+export function Leaderboard({ data, isLoading, hasSelectedRepos = true, toolFilter = 'all' }: LeaderboardProps) {
   const [expandedUser, setExpandedUser] = useState<string | null>(null);
   const [sortField, setSortField] = useState<SortField>('commits');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
   const [detailUser, setDetailUser] = useState<LeaderboardEntry | null>(null);
-  const [toolFilter, setToolFilter] = useState<ToolFilter>('all');
-
-  // Determine which tools are actually present in the data to show as filter options
-  // Claude tools are combined into a single "Claude" filter
-  const hasClaudeData = useMemo(() => {
-    return CLAUDE_TOOLS.some(tool =>
-      data.some(entry => entry.aiToolBreakdown[tool] > 0)
-    );
-  }, [data]);
-
-  const activeNonClaudeTools = useMemo(() => {
-    return (Object.keys(AI_TOOLS) as AITool[]).filter(tool =>
-      tool !== 'agent' && !CLAUDE_TOOLS.includes(tool) && data.some(entry => entry.aiToolBreakdown[tool] > 0)
-    );
-  }, [data]);
-
-  const hasAgentUsers = useMemo(() => {
-    return data.some(entry => entry.username.endsWith('-agent[bot]') || entry.aiToolBreakdown['agent'] > 0);
-  }, [data]);
-
-  const activeFilterCount = (hasClaudeData ? 1 : 0) + activeNonClaudeTools.length + (hasAgentUsers ? 1 : 0);
 
   // Recompute entries when filtered by tool
   const filteredData = useMemo(() => {
@@ -345,56 +325,6 @@ export function Leaderboard({ data, isLoading, hasSelectedRepos = true }: Leader
             </Button>
           </div>
         </div>
-        {(activeFilterCount > 1 || hasAgentUsers) && (
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-xs text-muted-foreground flex items-center gap-1">
-              <Filter className="h-3 w-3" />
-              Tool:
-            </span>
-            <Button
-              variant={toolFilter === 'all' ? 'default' : 'outline'}
-              size="sm"
-              onClick={() => setToolFilter('all')}
-              className="text-xs h-7"
-            >
-              All
-            </Button>
-            {hasClaudeData && (
-              <Button
-                variant={toolFilter === 'claude' ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => setToolFilter('claude')}
-                className="text-xs h-7 gap-1.5"
-              >
-                <div className={cn('w-2 h-2 rounded-full', AI_TOOLS['claude-coauthor'].color)} />
-                Claude
-              </Button>
-            )}
-            {activeNonClaudeTools.map(tool => (
-              <Button
-                key={tool}
-                variant={toolFilter === tool ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => setToolFilter(tool)}
-                className="text-xs h-7 gap-1.5"
-              >
-                <div className={cn('w-2 h-2 rounded-full', AI_TOOLS[tool].color)} />
-                {AI_TOOLS[tool].label}
-              </Button>
-            ))}
-            {hasAgentUsers && (
-              <Button
-                variant={toolFilter === 'agents' ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => setToolFilter('agents')}
-                className="text-xs h-7 gap-1.5"
-              >
-                <div className={cn('w-2 h-2 rounded-full', 'bg-orange-500')} />
-                Agents
-              </Button>
-            )}
-          </div>
-        )}
       </CardHeader>
       <CardContent className="space-y-3">
         {sortedData.map((entry) => {

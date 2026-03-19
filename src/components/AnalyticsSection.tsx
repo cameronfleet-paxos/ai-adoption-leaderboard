@@ -1,23 +1,10 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { ChevronDown, BarChart3 } from 'lucide-react';
+import { BarChart3 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/components/ui/collapsible';
-import { cn } from '@/lib/utils';
 import { AIToolDistributionChart } from '@/components/AIToolDistributionChart';
 import { AdoptionCohortChart } from '@/components/AdoptionCohortChart';
 import type { AIToolBreakdown, LeaderboardEntry } from '@/lib/github-client';
-
-const STORAGE_KEY = 'analytics-section-prefs';
-
-interface Prefs {
-  sectionOpen: boolean;
-}
-
-const DEFAULT_PREFS: Prefs = {
-  sectionOpen: true,
-};
 
 interface AnalyticsSectionProps {
   aiToolBreakdown: AIToolBreakdown;
@@ -34,26 +21,6 @@ export function AnalyticsSection({
   isLoading,
   hasSelectedRepos,
 }: AnalyticsSectionProps) {
-  const [prefs, setPrefs] = useState<Prefs>(DEFAULT_PREFS);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    try {
-      const stored = localStorage.getItem(STORAGE_KEY);
-      if (stored) {
-        setPrefs({ ...DEFAULT_PREFS, ...JSON.parse(stored) });
-      }
-    } catch {}
-  }, []);
-
-  const updatePrefs = (update: Partial<Prefs>) => {
-    const next = { ...prefs, ...update };
-    setPrefs(next);
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-    } catch {}
-  };
-
   if (isLoading) {
     return (
       <Card className="mb-8 animate-pulse">
@@ -88,33 +55,18 @@ export function AnalyticsSection({
 
   return (
     <Card className="mb-8">
-      <Collapsible open={prefs.sectionOpen} onOpenChange={(open) => updatePrefs({ sectionOpen: open })}>
-        <CardHeader className="pb-4">
-          <CollapsibleTrigger asChild>
-            <button className="flex items-center gap-2 hover:opacity-70 transition-opacity">
-              <ChevronDown
-                className={cn(
-                  'h-5 w-5 text-muted-foreground transition-transform duration-200',
-                  !prefs.sectionOpen && '-rotate-90'
-                )}
-              />
-              <CardTitle className="text-xl">Analytics</CardTitle>
-            </button>
-          </CollapsibleTrigger>
-        </CardHeader>
-
-        <CollapsibleContent>
-          <CardContent>
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <AIToolDistributionChart
-                aiToolBreakdown={aiToolBreakdown}
-                totalAICommits={totalAICommits}
-              />
-              <AdoptionCohortChart leaderboard={leaderboard} />
-            </div>
-          </CardContent>
-        </CollapsibleContent>
-      </Collapsible>
+      <CardHeader className="pb-4">
+        <CardTitle className="text-xl">Analytics</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <AIToolDistributionChart
+            aiToolBreakdown={aiToolBreakdown}
+            totalAICommits={totalAICommits}
+          />
+          <AdoptionCohortChart leaderboard={leaderboard} />
+        </div>
+      </CardContent>
     </Card>
   );
 }

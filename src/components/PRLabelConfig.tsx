@@ -1,13 +1,12 @@
 'use client';
 
 import { useState } from 'react';
-import { Tag, ChevronDown, X, Plus } from 'lucide-react';
+import { Tag, X, Plus } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
-import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/components/ui/collapsible';
 import { cn } from '@/lib/utils';
 import {
   type PRLabelConfig as PRLabelConfigType,
@@ -30,7 +29,6 @@ export function PRLabelConfig({
   onLabelConfigChange,
   selectedRepos,
 }: PRLabelConfigProps) {
-  const [isOpen, setIsOpen] = useState(false);
   const [newLabel, setNewLabel] = useState('');
   const [newLabelTool, setNewLabelTool] = useState<AITool>('claude-generated');
 
@@ -102,29 +100,16 @@ export function PRLabelConfig({
 
   return (
     <Card className="mb-8">
-      <Collapsible open={isOpen} onOpenChange={setIsOpen}>
-        <CardHeader className="pb-4">
-          <div className="flex items-center justify-between">
-            <CollapsibleTrigger asChild>
-              <button className="flex items-center gap-2 hover:opacity-70 transition-opacity">
-                <ChevronDown
-                  className={cn(
-                    'h-5 w-5 text-muted-foreground transition-transform duration-200',
-                    !isOpen && '-rotate-90'
-                  )}
-                />
-                <Tag className="h-5 w-5 text-muted-foreground" />
-                <CardTitle className="text-xl">PR Label Scanning</CardTitle>
-                <Badge variant="secondary" className="text-xs ml-1">
-                  {enabledCount} {enabledCount === 1 ? 'label' : 'labels'}, {scanRepoCount} {scanRepoCount === 1 ? 'repo' : 'repos'}
-                </Badge>
-              </button>
-            </CollapsibleTrigger>
-          </div>
-        </CardHeader>
-
-        <CollapsibleContent>
-          <CardContent className="space-y-6">
+      <CardHeader className="pb-4">
+        <div className="flex items-center gap-2">
+          <Tag className="h-5 w-5 text-muted-foreground" />
+          <CardTitle className="text-xl">PR Label Scanning</CardTitle>
+          <Badge variant="secondary" className="text-xs ml-1">
+            {enabledCount} {enabledCount === 1 ? 'label' : 'labels'}, {scanRepoCount} {scanRepoCount === 1 ? 'repo' : 'repos'}
+          </Badge>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-6">
             {/* Section 1: Active Labels grouped by AI tool */}
             <div>
               <h3 className="text-sm font-medium mb-3">Active Labels</h3>
@@ -258,9 +243,7 @@ export function PRLabelConfig({
                 </>
               )}
             </div>
-          </CardContent>
-        </CollapsibleContent>
-      </Collapsible>
+      </CardContent>
     </Card>
   );
 }

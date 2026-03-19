@@ -1,12 +1,13 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { BarChart3, BoxSelect, ChevronDown, TrendingUp } from 'lucide-react';
+import { BarChart3, BoxSelect, TrendingUp } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/components/ui/collapsible';
 import { cn } from '@/lib/utils';
 import { ProductivityComparisonChart } from '@/components/ProductivityComparisonChart';
 import { ProductivityStatsCards } from '@/components/ProductivityStatsCards';
+import { ProductivityTrendsCard } from '@/components/ProductivityTrendsCard';
+import { AIProductivityBoostCard } from '@/components/AIProductivityBoostCard';
 import type { ProductivityMetrics, ProductivityFetchProgress } from '@/lib/github-client';
 
 const STORAGE_KEY = 'productivity-section-prefs';
@@ -14,12 +15,10 @@ const STORAGE_KEY = 'productivity-section-prefs';
 type ViewMode = 'bar' | 'boxplot';
 
 interface Prefs {
-  sectionOpen: boolean;
   viewMode: ViewMode;
 }
 
 const DEFAULT_PREFS: Prefs = {
-  sectionOpen: true,
   viewMode: 'boxplot',
 };
 
@@ -159,118 +158,107 @@ export function ProductivitySection({
   }
 
   return (
-    <Card className="mb-8">
-      <Collapsible open={prefs.sectionOpen} onOpenChange={(open) => updatePrefs({ sectionOpen: open })}>
+    <>
+      <ProductivityTrendsCard prs={metrics.prs} />
+      <AIProductivityBoostCard prs={metrics.prs} />
+      <Card className="mb-8">
         <CardHeader className="pb-4">
           <div className="flex items-center justify-between">
-            <CollapsibleTrigger asChild>
-              <button className="flex items-center gap-2 hover:opacity-70 transition-opacity">
-                <ChevronDown
-                  className={cn(
-                    'h-5 w-5 text-muted-foreground transition-transform duration-200',
-                    !prefs.sectionOpen && '-rotate-90'
-                  )}
-                />
-                <CardTitle className="text-xl">Productivity</CardTitle>
-                <span className="text-sm text-muted-foreground ml-2">
-                  {metrics.human.prCount} human / {metrics.aiAssisted.prCount} AI-assisted / {metrics.agent.prCount} agent PRs
-                </span>
+            <div className="flex items-center gap-2">
+              <CardTitle className="text-xl">Human vs AI Comparison</CardTitle>
+              <span className="text-sm text-muted-foreground ml-2">
+                {metrics.human.prCount} human / {metrics.aiAssisted.prCount} AI-assisted / {metrics.agent.prCount} agent PRs
+              </span>
+            </div>
+            <div className="flex items-center gap-1 bg-muted rounded-md p-0.5">
+              <button
+                onClick={() => updatePrefs({ viewMode: 'bar' })}
+                className={cn(
+                  'flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors',
+                  prefs.viewMode === 'bar'
+                    ? 'bg-background shadow-sm text-foreground'
+                    : 'text-muted-foreground hover:text-foreground'
+                )}
+              >
+                <BarChart3 className="h-3 w-3" />
+                Bar
               </button>
-            </CollapsibleTrigger>
-            {prefs.sectionOpen && (
-              <div className="flex items-center gap-1 bg-muted rounded-md p-0.5">
-                <button
-                  onClick={() => updatePrefs({ viewMode: 'bar' })}
-                  className={cn(
-                    'flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors',
-                    prefs.viewMode === 'bar'
-                      ? 'bg-background shadow-sm text-foreground'
-                      : 'text-muted-foreground hover:text-foreground'
-                  )}
-                >
-                  <BarChart3 className="h-3 w-3" />
-                  Bar
-                </button>
-                <button
-                  onClick={() => updatePrefs({ viewMode: 'boxplot' })}
-                  className={cn(
-                    'flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors',
-                    prefs.viewMode === 'boxplot'
-                      ? 'bg-background shadow-sm text-foreground'
-                      : 'text-muted-foreground hover:text-foreground'
-                  )}
-                >
-                  <BoxSelect className="h-3 w-3" />
-                  Box Plot
-                </button>
-              </div>
-            )}
+              <button
+                onClick={() => updatePrefs({ viewMode: 'boxplot' })}
+                className={cn(
+                  'flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors',
+                  prefs.viewMode === 'boxplot'
+                    ? 'bg-background shadow-sm text-foreground'
+                    : 'text-muted-foreground hover:text-foreground'
+                )}
+              >
+                <BoxSelect className="h-3 w-3" />
+                Box Plot
+              </button>
+            </div>
           </div>
         </CardHeader>
+        <CardContent>
+              {wasCapped && (
+                <div className="mb-4 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg text-sm text-amber-800 dark:text-amber-200">
+                  Analysis capped at 3,000 most recent PRs. Narrow the date range for complete results.
+                </div>
+              )}
 
-        <CollapsibleContent>
-          <CardContent>
-            {wasCapped && (
-              <div className="mb-4 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg text-sm text-amber-800 dark:text-amber-200">
-                Analysis capped at 3,000 most recent PRs. Narrow the date range for complete results.
+              <ProductivityStatsCards metrics={metrics} prs={metrics.prs} />
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <ProductivityComparisonChart
+                  title="Cycle Time"
+                  unit="hours"
+                  human={metrics.human.cycleTime}
+                  aiAssisted={metrics.aiAssisted.cycleTime}
+                  agent={metrics.agent.cycleTime}
+                  viewMode={prefs.viewMode}
+                  tooltip="Hours from first commit authored date to PR merge date. Bar = median (P50). Box plot shows P10–P90 with IQR."
+                />
+                <ProductivityComparisonChart
+                  title="PR Size"
+                  unit="lines"
+                  human={metrics.human.prSize}
+                  aiAssisted={metrics.aiAssisted.prSize}
+                  agent={metrics.agent.prSize}
+                  viewMode={prefs.viewMode}
+                  tooltip="Total lines changed per PR (additions + deletions). Bar = median (P50). Box plot shows P10–P90 with IQR."
+                />
+                <ProductivityComparisonChart
+                  title="Review Rounds"
+                  unit="rounds"
+                  human={metrics.human.reviewRounds}
+                  aiAssisted={metrics.aiAssisted.reviewRounds}
+                  agent={metrics.agent.reviewRounds}
+                  viewMode={prefs.viewMode}
+                  tooltip="Count of APPROVED or CHANGES_REQUESTED reviews per PR (excluding bots and dismissed reviews). Bar = median (P50)."
+                />
+                <ProductivityComparisonChart
+                  title="Review Comments"
+                  unit="comments"
+                  human={metrics.human.reviewComments}
+                  aiAssisted={metrics.aiAssisted.reviewComments}
+                  agent={metrics.agent.reviewComments}
+                  viewMode={prefs.viewMode}
+                  tooltip="Total individual review comments per PR (summed across all review threads, including bot comments). Bar = median (P50)."
+                />
               </div>
-            )}
 
-            <ProductivityStatsCards metrics={metrics} prs={metrics.prs} />
-
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <ProductivityComparisonChart
-                title="Cycle Time"
-                unit="hours"
-                human={metrics.human.cycleTime}
-                aiAssisted={metrics.aiAssisted.cycleTime}
-                agent={metrics.agent.cycleTime}
-                viewMode={prefs.viewMode}
-                tooltip="Hours from first commit authored date to PR merge date. Bar = median (P50). Box plot shows P10–P90 with IQR."
-              />
-              <ProductivityComparisonChart
-                title="PR Size"
-                unit="lines"
-                human={metrics.human.prSize}
-                aiAssisted={metrics.aiAssisted.prSize}
-                agent={metrics.agent.prSize}
-                viewMode={prefs.viewMode}
-                tooltip="Total lines changed per PR (additions + deletions). Bar = median (P50). Box plot shows P10–P90 with IQR."
-              />
-              <ProductivityComparisonChart
-                title="Review Rounds"
-                unit="rounds"
-                human={metrics.human.reviewRounds}
-                aiAssisted={metrics.aiAssisted.reviewRounds}
-                agent={metrics.agent.reviewRounds}
-                viewMode={prefs.viewMode}
-                tooltip="Count of APPROVED or CHANGES_REQUESTED reviews per PR (excluding bots and dismissed reviews). Bar = median (P50)."
-              />
-              <ProductivityComparisonChart
-                title="Review Comments"
-                unit="comments"
-                human={metrics.human.reviewComments}
-                aiAssisted={metrics.aiAssisted.reviewComments}
-                agent={metrics.agent.reviewComments}
-                viewMode={prefs.viewMode}
-                tooltip="Total individual review comments per PR (summed across all review threads, including bot comments). Bar = median (P50)."
-              />
-            </div>
-
-            <div className="mt-6 max-w-lg mx-auto">
-              <ProductivityComparisonChart
-                title="Revert Rate"
-                unit="%"
-                human={{ p10: 0, p25: 0, median: metrics.human.revertRate, p75: 0, p90: 0 }}
-                aiAssisted={{ p10: 0, p25: 0, median: metrics.aiAssisted.revertRate, p75: 0, p90: 0 }}
-                agent={{ p10: 0, p25: 0, median: metrics.agent.revertRate, p75: 0, p90: 0 }}
-                isPercentage
-                tooltip={'Percentage of PRs that are reverts within each bucket. A PR is a revert if its title matches Revert "..." or its body contains "This reverts commit".'}
-              />
-            </div>
-          </CardContent>
-        </CollapsibleContent>
-      </Collapsible>
-    </Card>
+              <div className="mt-6 max-w-lg mx-auto">
+                <ProductivityComparisonChart
+                  title="Revert Rate"
+                  unit="%"
+                  human={{ p10: 0, p25: 0, median: metrics.human.revertRate, p75: 0, p90: 0 }}
+                  aiAssisted={{ p10: 0, p25: 0, median: metrics.aiAssisted.revertRate, p75: 0, p90: 0 }}
+                  agent={{ p10: 0, p25: 0, median: metrics.agent.revertRate, p75: 0, p90: 0 }}
+                  isPercentage
+                  tooltip={'Percentage of PRs that are reverts within each bucket. A PR is a revert if its title matches Revert "..." or its body contains "This reverts commit".'}
+                />
+              </div>
+            </CardContent>
+      </Card>
+    </>
   );
 }
