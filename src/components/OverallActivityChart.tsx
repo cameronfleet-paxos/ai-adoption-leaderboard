@@ -76,27 +76,30 @@ export function OverallActivityChart({ leaderboard, isLoading, hasSelectedRepos 
 
     const WINDOW = 7;
     const withTrend = result.map((day, i) => {
-      let windowAi = 0, windowTotal = 0;
+      let windowAi = 0, windowTotal = 0, windowAgent = 0;
       const start = Math.max(0, i - WINDOW + 1);
       for (let j = start; j <= i; j++) {
         windowAi += result[j].aiCommits;
         windowTotal += result[j].totalCommits;
+        windowAgent += result[j].agentCommits;
       }
       return {
         ...day,
         adoptionPct: windowTotal > 0 ? Math.round((windowAi / windowTotal) * 100 * 10) / 10 : null,
+        agentPct: windowTotal > 0 ? Math.round((windowAgent / windowTotal) * 100 * 10) / 10 : null,
       };
     });
     return withTrend;
   }, [leaderboard]);
 
-  type SeriesKey = 'aiCommits' | 'agentCommits' | 'totalCommits' | 'adoptionPct';
+  type SeriesKey = 'aiCommits' | 'agentCommits' | 'totalCommits' | 'adoptionPct' | 'agentPct';
 
   const SERIES: { key: SeriesKey; label: string; axis: 'left' | 'right' }[] = [
     { key: 'aiCommits', label: 'AI Commits', axis: 'left' },
     { key: 'agentCommits', label: 'Agent Commits', axis: 'left' },
     { key: 'totalCommits', label: 'All Commits', axis: 'left' },
     { key: 'adoptionPct', label: 'Adoption % (7d avg)', axis: 'right' },
+    { key: 'agentPct', label: 'Agent % (7d avg)', axis: 'right' },
   ];
 
   const [hiddenSeries, setHiddenSeries] = useState<Set<SeriesKey>>(new Set());
@@ -181,7 +184,7 @@ export function OverallActivityChart({ leaderboard, isLoading, hasSelectedRepos 
               <RechartsTooltip
                 labelFormatter={(v) => typeof v === 'string' ? new Date(v).toLocaleDateString() : String(v)}
                 formatter={(value, name) => {
-                  if (name === 'Adoption % (7d avg)') return value != null ? [`${value}%`, name] : ['-', name];
+                  if (name === 'Adoption % (7d avg)' || name === 'Agent % (7d avg)') return value != null ? [`${value}%`, name] : ['-', name];
                   return [value, name];
                 }}
               />
@@ -234,6 +237,19 @@ export function OverallActivityChart({ leaderboard, isLoading, hasSelectedRepos 
                   connectNulls
                 />
               )}
+              {isVisible('agentPct') && (
+                <Line
+                  yAxisId="right"
+                  type="monotone"
+                  dataKey="agentPct"
+                  name="Agent % (7d avg)"
+                  stroke="hsl(25 95% 53%)"
+                  strokeWidth={2.5}
+                  strokeDasharray="6 3"
+                  dot={false}
+                  connectNulls
+                />
+              )}
             </ComposedChart>
           </ResponsiveContainer>
         </div>
@@ -265,6 +281,13 @@ export function OverallActivityChart({ leaderboard, isLoading, hasSelectedRepos 
           >
             <div className="w-4 h-0.5 rounded" style={{ backgroundColor: 'hsl(var(--chart-1))' }} />
             <span>Adoption % (7d avg)</span>
+          </button>
+          <button
+            onClick={() => toggleSeries('agentPct')}
+            className={`flex items-center gap-1.5 cursor-pointer transition-opacity ${hiddenSeries.has('agentPct') ? 'opacity-30 line-through' : ''}`}
+          >
+            <div className="w-4 h-0.5 rounded" style={{ backgroundColor: 'hsl(25 95% 53%)', borderTop: '2px dashed' }} />
+            <span>Agent % (7d avg)</span>
           </button>
         </div>
       </CardContent>
