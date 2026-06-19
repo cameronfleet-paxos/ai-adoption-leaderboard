@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { Info } from 'lucide-react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid,
@@ -36,6 +36,7 @@ interface TrendLineChartProps {
   tooltip?: string;
   valueFormatter?: (value: number) => string;
   viewMode?: TrendViewMode;
+  excludeZero?: boolean;
 }
 
 function defaultFormatter(value: number, unit: string): string {
@@ -47,10 +48,23 @@ function defaultFormatter(value: number, unit: string): string {
   return value % 1 === 0 ? String(value) : value.toFixed(1);
 }
 
-export function TrendLineChart({ data, title, unit, tooltip, valueFormatter, viewMode = 'split' }: TrendLineChartProps) {
+export function TrendLineChart({ data, title, unit, tooltip, valueFormatter, viewMode = 'split', excludeZero = false }: TrendLineChartProps) {
   const [hiddenSeries, setHiddenSeries] = useState<Set<string>>(new Set());
   const fmt = useCallback((v: number) => valueFormatter ? valueFormatter(v) : defaultFormatter(v, unit), [valueFormatter, unit]);
   const showDots = data.length <= 12;
+
+  const yDomain = useMemo(() => {
+    if (!excludeZero) return [0, 'auto'] as [number, string];
+    const activeKeys = (viewMode === 'split' ? SPLIT_SERIES : COMBINED_SERIES)
+      .filter(s => !hiddenSeries.has(s.key))
+      .map(s => s.key);
+    const allValues = data.flatMap(p => activeKeys.map(k => p[k])).filter((v): v is number => v != null && v > 0);
+    if (allValues.length === 0) return [0, 'auto'] as [number, string];
+    const minVal = Math.min(...allValues);
+    const maxVal = Math.max(...allValues);
+    const buffer = (maxVal - minVal) * 0.1 || minVal * 0.1;
+    return [Math.max(0, minVal - buffer), 'auto'] as [number, string];
+  }, [excludeZero, data, viewMode, hiddenSeries]);
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const handleLegendClick = useCallback((entry: any) => {
@@ -103,7 +117,7 @@ export function TrendLineChart({ data, title, unit, tooltip, valueFormatter, vie
           <LineChart data={data} margin={{ top: 5, right: 10, left: 10, bottom: 5 }}>
             <CartesianGrid strokeDasharray="3 3" className="opacity-30" />
             <XAxis dataKey="label" tick={{ fontSize: 11 }} className="fill-muted-foreground" />
-            <YAxis tick={{ fontSize: 11 }} className="fill-muted-foreground" tickFormatter={fmt} width={45} />
+            <YAxis tick={{ fontSize: 11 }} className="fill-muted-foreground" tickFormatter={fmt} width={45} domain={yDomain} />
             <RechartsTooltip content={tooltipContent} />
             {viewMode === 'split' && (
               <Legend

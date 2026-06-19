@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState, useEffect } from 'react';
-import { TrendingUp, Layers, Split } from 'lucide-react';
+import { TrendingUp, Layers, Split, ZoomIn } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { cn, floorToMonday } from '@/lib/utils';
 import { TrendLineChart, type TrendPoint, type TrendViewMode } from '@/components/TrendLineChart';
@@ -63,6 +63,7 @@ interface ProductivityTrendsCardProps {
 
 export function ProductivityTrendsCard({ prs }: ProductivityTrendsCardProps) {
   const [viewMode, setViewMode] = useState<TrendViewMode>('combined');
+  const [excludeZero, setExcludeZero] = useState(false);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -73,13 +74,22 @@ export function ProductivityTrendsCard({ prs }: ProductivityTrendsCardProps) {
         if (parsed.viewMode === 'split' || parsed.viewMode === 'combined') {
           setViewMode(parsed.viewMode);
         }
+        if (typeof parsed.excludeZero === 'boolean') {
+          setExcludeZero(parsed.excludeZero);
+        }
       }
     } catch {}
   }, []);
 
   const updateViewMode = (mode: TrendViewMode) => {
     setViewMode(mode);
-    try { localStorage.setItem(TRENDS_PREFS_KEY, JSON.stringify({ viewMode: mode })); } catch {}
+    try { localStorage.setItem(TRENDS_PREFS_KEY, JSON.stringify({ viewMode: mode, excludeZero })); } catch {}
+  };
+
+  const toggleExcludeZero = () => {
+    const next = !excludeZero;
+    setExcludeZero(next);
+    try { localStorage.setItem(TRENDS_PREFS_KEY, JSON.stringify({ viewMode, excludeZero: next })); } catch {}
   };
 
   const { volume, throughput, cycleTime, prSize, hasSufficientData } = useMemo(() => {
@@ -177,31 +187,46 @@ export function ProductivityTrendsCard({ prs }: ProductivityTrendsCardProps) {
             <TrendingUp className="h-4 w-4 text-muted-foreground" />
             <CardTitle className="text-xl">Trends</CardTitle>
           </div>
-          <div className="flex items-center gap-1 bg-muted rounded-md p-0.5">
+          <div className="flex items-center gap-2">
             <button
-              onClick={() => updateViewMode('combined')}
+              onClick={toggleExcludeZero}
               className={cn(
-                'flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors',
-                viewMode === 'combined'
-                  ? 'bg-background shadow-sm text-foreground'
-                  : 'text-muted-foreground hover:text-foreground'
+                'flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors border',
+                excludeZero
+                  ? 'bg-background border-border shadow-sm text-foreground'
+                  : 'border-transparent text-muted-foreground hover:text-foreground'
               )}
+              title="Fit y-axis to data (exclude zero)"
             >
-              <Layers className="h-3 w-3" />
-              Combined
+              <ZoomIn className="h-3 w-3" />
+              Fit axis
             </button>
-            <button
-              onClick={() => updateViewMode('split')}
-              className={cn(
-                'flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors',
-                viewMode === 'split'
-                  ? 'bg-background shadow-sm text-foreground'
-                  : 'text-muted-foreground hover:text-foreground'
-              )}
-            >
-              <Split className="h-3 w-3" />
-              By Type
-            </button>
+            <div className="flex items-center gap-1 bg-muted rounded-md p-0.5">
+              <button
+                onClick={() => updateViewMode('combined')}
+                className={cn(
+                  'flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors',
+                  viewMode === 'combined'
+                    ? 'bg-background shadow-sm text-foreground'
+                    : 'text-muted-foreground hover:text-foreground'
+                )}
+              >
+                <Layers className="h-3 w-3" />
+                Combined
+              </button>
+              <button
+                onClick={() => updateViewMode('split')}
+                className={cn(
+                  'flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors',
+                  viewMode === 'split'
+                    ? 'bg-background shadow-sm text-foreground'
+                    : 'text-muted-foreground hover:text-foreground'
+                )}
+              >
+                <Split className="h-3 w-3" />
+                By Type
+              </button>
+            </div>
           </div>
         </div>
       </CardHeader>
@@ -213,6 +238,7 @@ export function ProductivityTrendsCard({ prs }: ProductivityTrendsCardProps) {
             unit="PRs"
             tooltip="Number of merged PRs per time bucket, broken down by category."
             viewMode={viewMode}
+            excludeZero={excludeZero}
           />
           <TrendLineChart
             data={throughput}
@@ -220,6 +246,7 @@ export function ProductivityTrendsCard({ prs }: ProductivityTrendsCardProps) {
             unit="PRs/dev"
             tooltip="Merged PRs divided by unique authors in each time bucket. Measures individual throughput."
             viewMode={viewMode}
+            excludeZero={excludeZero}
           />
           <TrendLineChart
             data={cycleTime}
@@ -227,6 +254,7 @@ export function ProductivityTrendsCard({ prs }: ProductivityTrendsCardProps) {
             unit="hours"
             tooltip="Median cycle time (first commit to merge) per time bucket."
             viewMode={viewMode}
+            excludeZero={excludeZero}
           />
           <TrendLineChart
             data={prSize}
@@ -234,6 +262,7 @@ export function ProductivityTrendsCard({ prs }: ProductivityTrendsCardProps) {
             unit="lines"
             tooltip="Median PR size (additions + deletions) per time bucket."
             viewMode={viewMode}
+            excludeZero={excludeZero}
           />
         </div>
       </CardContent>
