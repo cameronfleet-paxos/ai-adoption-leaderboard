@@ -322,11 +322,13 @@ export function Leaderboard({ data, isLoading, hasSelectedRepos = true, toolFilt
   const AIToolBreakdownBar = ({
     toolBreakdown,
     modelBreakdown,
-    total
+    total,
+    modelInsights,
   }: {
     toolBreakdown: AIToolBreakdown;
     modelBreakdown: ClaudeModelBreakdown;
     total: number;
+    modelInsights?: boolean;
   }) => {
     if (total === 0) return null;
 
@@ -334,12 +336,13 @@ export function Leaderboard({ data, isLoading, hasSelectedRepos = true, toolFilt
       tool => toolBreakdown[tool] > 0
     );
 
-    const models = (['opus', 'sonnet', 'haiku', 'fable', 'unknown'] as const).filter(
-      model => modelBreakdown[model] > 0
-    );
-
-    // Check if we have Claude commits to show model breakdown
     const hasClaudeCommits = toolBreakdown['claude-coauthor'] > 0 || toolBreakdown['claude-generated'] > 0;
+
+    const claudeTotal = MODEL_ORDER.reduce((s, k) => s + (modelBreakdown[k] || 0), 0);
+    const sortedModels = [...MODEL_ORDER]
+      .map(k => ({ k, count: modelBreakdown[k] || 0, info: CLAUDE_MODELS[k] }))
+      .filter(m => m.count > 0)
+      .sort((a, b) => b.count - a.count);
 
     return (
       <TooltipProvider>
@@ -361,25 +364,37 @@ export function Leaderboard({ data, isLoading, hasSelectedRepos = true, toolFilt
               </Tooltip>
             ))}
           </div>
-          {/* Model breakdown (shown if any Claude commits) */}
-          {hasClaudeCommits && models.length > 0 && (
+          {/* Model section — dots or % breakdown depending on toggle */}
+          {hasClaudeCommits && sortedModels.length > 0 && claudeTotal > 0 && (
             <>
               <span className="text-muted-foreground/40">|</span>
-              <div className="flex items-center gap-1">
-                {models.map(model => (
-                  <Tooltip key={model}>
-                    <TooltipTrigger asChild>
-                      <div className="flex items-center gap-0.5">
-                        <div className={cn('w-1.5 h-1.5 rounded-full', CLAUDE_MODELS[model].color)} />
-                        <span className="text-[10px] text-muted-foreground">{modelBreakdown[model]}</span>
-                      </div>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <p className="font-medium">{CLAUDE_MODELS[model].label}</p>
-                    </TooltipContent>
-                  </Tooltip>
-                ))}
-              </div>
+              {modelInsights ? (
+                <div className="flex items-center gap-2 text-xs">
+                  {sortedModels.map((m, i) => (
+                    <span key={m.k} className="flex items-center gap-1">
+                      <div className={cn('w-1.5 h-1.5 rounded-full flex-shrink-0', MODEL_BG[m.info.color])} />
+                      <span className={i === 0 ? 'font-medium text-foreground' : 'text-muted-foreground'}>{m.info.label}</span>
+                      <span className="text-muted-foreground">{Math.round((m.count / claudeTotal) * 100)}%</span>
+                    </span>
+                  ))}
+                </div>
+              ) : (
+                <div className="flex items-center gap-1">
+                  {sortedModels.map(m => (
+                    <Tooltip key={m.k}>
+                      <TooltipTrigger asChild>
+                        <div className="flex items-center gap-0.5">
+                          <div className={cn('w-1.5 h-1.5 rounded-full', MODEL_BG[m.info.color])} />
+                          <span className="text-[10px] text-muted-foreground">{m.count}</span>
+                        </div>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p className="font-medium">{m.info.label}</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  ))}
+                </div>
+              )}
             </>
           )}
         </div>
@@ -574,44 +589,12 @@ export function Leaderboard({ data, isLoading, hasSelectedRepos = true, toolFilt
                                 <Zap className="h-3 w-3" />
                                 {entry.commits} AI commits
                               </span>
-                              {showModelInsights ? (() => {
-                                const bd = entry.claudeModelBreakdown;
-                                const claudeTotal = MODEL_ORDER.reduce((s, k) => s + (bd[k] || 0), 0);
-                                if (claudeTotal === 0) return (
-                                  <AIToolBreakdownBar
-                                    toolBreakdown={entry.aiToolBreakdown}
-                                    modelBreakdown={entry.claudeModelBreakdown}
-                                    total={entry.commits}
-                                  />
-                                );
-                                const sorted = [...MODEL_ORDER]
-                                  .map(k => ({ k, count: bd[k] || 0, info: CLAUDE_MODELS[k] }))
-                                  .filter(m => m.count > 0)
-                                  .sort((a, b) => b.count - a.count);
-                                const primary = sorted[0];
-                                return (
-                                  <span className="flex items-center gap-2 text-xs">
-                                    <span className="flex items-center gap-1">
-                                      <div className={cn('w-1.5 h-1.5 rounded-full flex-shrink-0', MODEL_BG[primary.info.color])} />
-                                      <span className="font-medium text-foreground">{primary.info.label}</span>
-                                      <span className="text-muted-foreground">{Math.round((primary.count / claudeTotal) * 100)}%</span>
-                                    </span>
-                                    {sorted.slice(1).map(m => (
-                                      <span key={m.k} className="flex items-center gap-1 text-muted-foreground">
-                                        <div className={cn('w-1.5 h-1.5 rounded-full flex-shrink-0', MODEL_BG[m.info.color])} />
-                                        <span>{m.info.label}</span>
-                                        <span>{Math.round((m.count / claudeTotal) * 100)}%</span>
-                                      </span>
-                                    ))}
-                                  </span>
-                                );
-                              })() : (
-                                <AIToolBreakdownBar
-                                  toolBreakdown={entry.aiToolBreakdown}
-                                  modelBreakdown={entry.claudeModelBreakdown}
-                                  total={entry.commits}
-                                />
-                              )}
+                              <AIToolBreakdownBar
+                                toolBreakdown={entry.aiToolBreakdown}
+                                modelBreakdown={entry.claudeModelBreakdown}
+                                total={entry.commits}
+                                modelInsights={showModelInsights}
+                              />
                               <span className="flex items-center gap-1">
                                 <GitCommit className="h-3 w-3" />
                                 {entry.totalCommits} total
