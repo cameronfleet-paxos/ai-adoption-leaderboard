@@ -492,7 +492,7 @@ export function Leaderboard({ data, isLoading, hasSelectedRepos = true, toolFilt
               className="text-xs text-muted-foreground gap-1.5 mr-2"
             >
               <Cpu className="h-3 w-3" />
-              Model insights
+              {showModelInsights ? 'Hide model breakdowns' : 'Show model breakdowns'}
             </Button>
             <span className="text-xs text-muted-foreground mr-1">Sort by:</span>
             <Button
