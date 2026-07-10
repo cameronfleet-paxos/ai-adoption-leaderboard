@@ -1,14 +1,87 @@
 import { useState, useMemo } from 'react';
-import { ChevronDown, ChevronRight, ExternalLink, Trophy, Medal, Award, Zap, Calendar, GitCommit, ArrowUp, ArrowDown, BarChart3 } from 'lucide-react';
+import { ChevronDown, ChevronRight, ExternalLink, Trophy, Medal, Award, Zap, Calendar, GitCommit, ArrowUp, ArrowDown, BarChart3, Cpu } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
 import { AI_TOOLS, CLAUDE_MODELS, type AITool, type AIToolBreakdown, type ClaudeModel, type ClaudeModelBreakdown } from '@/lib/github-client';
 import { UserDetailSheet } from '@/components/UserDetailSheet';
+
+const MODEL_ORDER = ['opus', 'sonnet', 'haiku', 'fable', 'unknown'] as const;
+
+// Tailwind bg classes can't be dynamic — map them explicitly
+const MODEL_BG: Record<string, string> = {
+  'bg-amber-500': 'bg-amber-500',
+  'bg-violet-500': 'bg-violet-500',
+  'bg-emerald-500': 'bg-emerald-500',
+  'bg-rose-500': 'bg-rose-500',
+  'bg-purple-400': 'bg-purple-400',
+};
+
+function ModelInsightsPopover({ modelBreakdown }: { modelBreakdown: ClaudeModelBreakdown }) {
+  const models = MODEL_ORDER
+    .map(key => ({ key, info: CLAUDE_MODELS[key], count: modelBreakdown[key] || 0 }))
+    .filter(m => m.count > 0)
+    .sort((a, b) => b.count - a.count);
+
+  if (models.length === 0) return null;
+
+  const total = models.reduce((s, m) => s + m.count, 0);
+  const favourite = models[0];
+  const rest = models.slice(1);
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-6 px-2 text-xs text-muted-foreground hover:text-foreground gap-1"
+          onClick={e => e.stopPropagation()}
+        >
+          <Cpu className="h-3 w-3" />
+          Model insights
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent className="w-56 p-3" align="start" onClick={e => e.stopPropagation()}>
+        <p className="text-xs font-medium text-muted-foreground mb-2">Claude model usage</p>
+        {/* Favourite */}
+        <div className="flex items-center gap-2 mb-3">
+          <div className={cn('w-2.5 h-2.5 rounded-full flex-shrink-0', MODEL_BG[favourite.info.color] || favourite.info.color)} />
+          <span className="font-semibold text-sm">{favourite.info.label}</span>
+          <span className="ml-auto text-sm font-bold">{Math.round((favourite.count / total) * 100)}%</span>
+        </div>
+        {/* Stacked bar */}
+        <div className="flex h-2 rounded-full overflow-hidden mb-3 gap-px">
+          {models.map(m => (
+            <div
+              key={m.key}
+              className={cn(MODEL_BG[m.info.color] || m.info.color)}
+              style={{ width: `${(m.count / total) * 100}%` }}
+            />
+          ))}
+        </div>
+        {/* Rest */}
+        {rest.length > 0 && (
+          <div className="space-y-1.5">
+            {rest.map(m => (
+              <div key={m.key} className="flex items-center gap-2 text-xs text-muted-foreground">
+                <div className={cn('w-2 h-2 rounded-full flex-shrink-0', MODEL_BG[m.info.color] || m.info.color)} />
+                <span>{m.info.label}</span>
+                <span className="ml-auto">{m.count} <span className="opacity-60">({Math.round((m.count / total) * 100)}%)</span></span>
+              </div>
+            ))}
+          </div>
+        )}
+        <p className="text-[10px] text-muted-foreground mt-2 pt-2 border-t">{total} Claude commits total</p>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
 
 interface CommitDetail {
   sha: string;
@@ -379,6 +452,9 @@ export function Leaderboard({ data, isLoading, hasSelectedRepos = true, toolFilt
                                 modelBreakdown={entry.claudeModelBreakdown}
                                 total={entry.commits}
                               />
+                              {(entry.aiToolBreakdown['claude-coauthor'] > 0 || entry.aiToolBreakdown['claude-generated'] > 0) && (
+                                <ModelInsightsPopover modelBreakdown={entry.claudeModelBreakdown} />
+                              )}
                               <span className="flex items-center gap-1">
                                 <GitCommit className="h-3 w-3" />
                                 {entry.totalCommits} total
