@@ -574,22 +574,23 @@ export function Leaderboard({ data, isLoading, hasSelectedRepos = true, toolFilt
                                 <Zap className="h-3 w-3" />
                                 {entry.commits} AI commits
                               </span>
-                              <AIToolBreakdownBar
-                                toolBreakdown={entry.aiToolBreakdown}
-                                modelBreakdown={entry.claudeModelBreakdown}
-                                total={entry.commits}
-                              />
-                              {showModelInsights && (() => {
+                              {showModelInsights ? (() => {
                                 const bd = entry.claudeModelBreakdown;
                                 const claudeTotal = MODEL_ORDER.reduce((s, k) => s + (bd[k] || 0), 0);
-                                if (claudeTotal === 0) return null;
+                                if (claudeTotal === 0) return (
+                                  <AIToolBreakdownBar
+                                    toolBreakdown={entry.aiToolBreakdown}
+                                    modelBreakdown={entry.claudeModelBreakdown}
+                                    total={entry.commits}
+                                  />
+                                );
                                 const sorted = [...MODEL_ORDER]
                                   .map(k => ({ k, count: bd[k] || 0, info: CLAUDE_MODELS[k] }))
                                   .filter(m => m.count > 0)
                                   .sort((a, b) => b.count - a.count);
                                 const primary = sorted[0];
                                 return (
-                                  <span className="flex items-center gap-2 text-xs border-l pl-3 ml-1">
+                                  <span className="flex items-center gap-2 text-xs">
                                     <span className="flex items-center gap-1">
                                       <div className={cn('w-1.5 h-1.5 rounded-full flex-shrink-0', MODEL_BG[primary.info.color])} />
                                       <span className="font-medium text-foreground">{primary.info.label}</span>
@@ -604,7 +605,13 @@ export function Leaderboard({ data, isLoading, hasSelectedRepos = true, toolFilt
                                     ))}
                                   </span>
                                 );
-                              })()}
+                              })() : (
+                                <AIToolBreakdownBar
+                                  toolBreakdown={entry.aiToolBreakdown}
+                                  modelBreakdown={entry.claudeModelBreakdown}
+                                  total={entry.commits}
+                                />
+                              )}
                               <span className="flex items-center gap-1">
                                 <GitCommit className="h-3 w-3" />
                                 {entry.totalCommits} total
