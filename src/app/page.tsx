@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo, Suspense } from 'react';
 import { useSearchParams, useRouter, usePathname } from 'next/navigation';
-import { Leaderboard } from '@/components/Leaderboard';
+import { Leaderboard, ModelInsightsPanel } from '@/components/Leaderboard';
 import { StatsCards } from '@/components/StatsCards';
 import { OverallActivityChart } from '@/components/OverallActivityChart';
 import { AnalyticsSection } from '@/components/AnalyticsSection';
@@ -800,12 +800,15 @@ function HomeContent() {
 
       case 'leaderboard':
         return (
-          <Leaderboard
-            data={data.leaderboard}
-            isLoading={isLoading}
-            hasSelectedRepos={selectedRepos.length > 0}
-            toolFilter={toolFilter}
-          />
+          <>
+            <ModelInsightsPanel data={data.leaderboard} />
+            <Leaderboard
+              data={data.leaderboard}
+              isLoading={isLoading}
+              hasSelectedRepos={selectedRepos.length > 0}
+              toolFilter={toolFilter}
+            />
+          </>
         );
 
       case 'productivity':

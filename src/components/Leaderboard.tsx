@@ -1,12 +1,11 @@
 import { useState, useMemo } from 'react';
-import { ChevronDown, ChevronRight, ExternalLink, Trophy, Medal, Award, Zap, Calendar, GitCommit, ArrowUp, ArrowDown, BarChart3, Cpu } from 'lucide-react';
+import { ChevronDown, ChevronRight, ExternalLink, Trophy, Medal, Award, Zap, Calendar, GitCommit, ArrowUp, ArrowDown, BarChart3, Cpu, ChevronUp } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
 import { AI_TOOLS, CLAUDE_MODELS, type AITool, type AIToolBreakdown, type ClaudeModel, type ClaudeModelBreakdown } from '@/lib/github-client';
 import { UserDetailSheet } from '@/components/UserDetailSheet';
@@ -22,64 +21,180 @@ const MODEL_BG: Record<string, string> = {
   'bg-purple-400': 'bg-purple-400',
 };
 
-function ModelInsightsPopover({ modelBreakdown }: { modelBreakdown: ClaudeModelBreakdown }) {
-  const models = MODEL_ORDER
-    .map(key => ({ key, info: CLAUDE_MODELS[key], count: modelBreakdown[key] || 0 }))
-    .filter(m => m.count > 0)
-    .sort((a, b) => b.count - a.count);
+interface EngineerModelStats {
+  username: string;
+  avatar: string;
+  primaryModel: typeof MODEL_ORDER[number];
+  breakdown: ClaudeModelBreakdown;
+  totalClaudeCommits: number;
+}
 
-  if (models.length === 0) return null;
+interface ModelInsightsPanelProps {
+  data: Array<{ username: string; avatar: string; claudeModelBreakdown: ClaudeModelBreakdown; aiToolBreakdown: AIToolBreakdown }>;
+}
 
-  const total = models.reduce((s, m) => s + m.count, 0);
-  const favourite = models[0];
-  const rest = models.slice(1);
+export function ModelInsightsPanel({ data }: ModelInsightsPanelProps) {
+  const [open, setOpen] = useState(false);
+
+  const claudeEngineers: EngineerModelStats[] = useMemo(() => {
+    return data
+      .filter(e => (e.aiToolBreakdown['claude-coauthor'] || 0) + (e.aiToolBreakdown['claude-generated'] || 0) > 0)
+      .map(e => {
+        const bd = e.claudeModelBreakdown;
+        const total = MODEL_ORDER.reduce((s, k) => s + (bd[k] || 0), 0);
+        const primary = [...MODEL_ORDER].sort((a, b) => (bd[b] || 0) - (bd[a] || 0))[0];
+        return { username: e.username, avatar: e.avatar, primaryModel: primary, breakdown: bd, totalClaudeCommits: total };
+      })
+      .filter(e => e.totalClaudeCommits > 0);
+  }, [data]);
+
+  // Aggregate commit counts across all engineers
+  const orgTotals = useMemo(() => {
+    const totals: ClaudeModelBreakdown = { opus: 0, sonnet: 0, haiku: 0, fable: 0, unknown: 0 };
+    for (const e of claudeEngineers) {
+      for (const k of MODEL_ORDER) totals[k] = (totals[k] || 0) + (e.breakdown[k] || 0);
+    }
+    return totals;
+  }, [claudeEngineers]);
+
+  const orgTotal = MODEL_ORDER.reduce((s, k) => s + orgTotals[k], 0);
+
+  // Engineers grouped by primary model
+  const byPrimary = useMemo(() => {
+    const groups: Record<string, EngineerModelStats[]> = {};
+    for (const e of claudeEngineers) {
+      if (!groups[e.primaryModel]) groups[e.primaryModel] = [];
+      groups[e.primaryModel].push(e);
+    }
+    return groups;
+  }, [claudeEngineers]);
+
+  // Engineers who have ever used fable (even if not primary)
+  const fableUsers = useMemo(() =>
+    claudeEngineers.filter(e => (e.breakdown.fable || 0) > 0),
+  [claudeEngineers]);
+
+  if (claudeEngineers.length === 0) return null;
 
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-6 px-2 text-xs text-muted-foreground hover:text-foreground gap-1"
-          onClick={e => e.stopPropagation()}
-        >
-          <Cpu className="h-3 w-3" />
-          Model insights
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent className="w-56 p-3" align="start" onClick={e => e.stopPropagation()}>
-        <p className="text-xs font-medium text-muted-foreground mb-2">Claude model usage</p>
-        {/* Favourite */}
-        <div className="flex items-center gap-2 mb-3">
-          <div className={cn('w-2.5 h-2.5 rounded-full flex-shrink-0', MODEL_BG[favourite.info.color] || favourite.info.color)} />
-          <span className="font-semibold text-sm">{favourite.info.label}</span>
-          <span className="ml-auto text-sm font-bold">{Math.round((favourite.count / total) * 100)}%</span>
+    <Card className="mb-4">
+      <CardHeader className="pb-3">
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-base flex items-center gap-2">
+            <Cpu className="h-4 w-4" />
+            Model Insights
+          </CardTitle>
+          <Button variant="outline" size="sm" onClick={() => setOpen(o => !o)} className="gap-1.5 text-xs">
+            {open ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+            {open ? 'Hide' : 'Show model insights'}
+          </Button>
         </div>
-        {/* Stacked bar */}
-        <div className="flex h-2 rounded-full overflow-hidden mb-3 gap-px">
-          {models.map(m => (
-            <div
-              key={m.key}
-              className={cn(MODEL_BG[m.info.color] || m.info.color)}
-              style={{ width: `${(m.count / total) * 100}%` }}
-            />
-          ))}
-        </div>
-        {/* Rest */}
-        {rest.length > 0 && (
-          <div className="space-y-1.5">
-            {rest.map(m => (
-              <div key={m.key} className="flex items-center gap-2 text-xs text-muted-foreground">
-                <div className={cn('w-2 h-2 rounded-full flex-shrink-0', MODEL_BG[m.info.color] || m.info.color)} />
-                <span>{m.info.label}</span>
-                <span className="ml-auto">{m.count} <span className="opacity-60">({Math.round((m.count / total) * 100)}%)</span></span>
-              </div>
-            ))}
+      </CardHeader>
+
+      {open && (
+        <CardContent className="pt-0 space-y-6">
+          {/* Org-wide commit distribution */}
+          <div>
+            <p className="text-xs font-medium text-muted-foreground mb-2">Org-wide Claude commit distribution</p>
+            <div className="flex h-3 rounded-full overflow-hidden mb-2 gap-px">
+              {MODEL_ORDER.filter(k => orgTotals[k] > 0).map(k => (
+                <div
+                  key={k}
+                  className={cn(MODEL_BG[CLAUDE_MODELS[k].color])}
+                  style={{ width: `${(orgTotals[k] / orgTotal) * 100}%` }}
+                />
+              ))}
+            </div>
+            <div className="flex flex-wrap gap-x-4 gap-y-1">
+              {MODEL_ORDER.filter(k => orgTotals[k] > 0).map(k => (
+                <div key={k} className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <div className={cn('w-2 h-2 rounded-full', MODEL_BG[CLAUDE_MODELS[k].color])} />
+                  <span className="font-medium text-foreground">{CLAUDE_MODELS[k].label}</span>
+                  <span>{orgTotals[k]} commits</span>
+                  <span className="opacity-60">({Math.round((orgTotals[k] / orgTotal) * 100)}%)</span>
+                </div>
+              ))}
+            </div>
           </div>
-        )}
-        <p className="text-[10px] text-muted-foreground mt-2 pt-2 border-t">{total} Claude commits total</p>
-      </DropdownMenuContent>
-    </DropdownMenu>
+
+          {/* Primary model breakdown by engineer count */}
+          <div>
+            <p className="text-xs font-medium text-muted-foreground mb-3">Primary model by engineer</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              {MODEL_ORDER.filter(k => byPrimary[k]?.length > 0).map(k => {
+                const engineers = byPrimary[k];
+                const info = CLAUDE_MODELS[k];
+                return (
+                  <div key={k} className="border rounded-lg p-3">
+                    <div className="flex items-center gap-2 mb-2">
+                      <div className={cn('w-2.5 h-2.5 rounded-full', MODEL_BG[info.color])} />
+                      <span className="font-semibold text-sm">{info.label}</span>
+                      <Badge variant="secondary" className="ml-auto text-xs">{engineers.length} engineer{engineers.length !== 1 ? 's' : ''}</Badge>
+                    </div>
+                    <div className="flex flex-wrap gap-1">
+                      {engineers.slice(0, 8).map(e => (
+                        <Tooltip key={e.username}>
+                          <TooltipTrigger asChild>
+                            <Avatar className="h-6 w-6 cursor-default">
+                              <AvatarImage src={e.avatar} alt={e.username} />
+                              <AvatarFallback className="text-[9px]">{e.username.slice(0, 2).toUpperCase()}</AvatarFallback>
+                            </Avatar>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p className="font-medium">{e.username}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {Math.round(((e.breakdown[k] || 0) / e.totalClaudeCommits) * 100)}% {info.label} · {e.totalClaudeCommits} Claude commits
+                            </p>
+                          </TooltipContent>
+                        </Tooltip>
+                      ))}
+                      {engineers.length > 8 && (
+                        <div className="h-6 w-6 rounded-full bg-muted flex items-center justify-center text-[9px] text-muted-foreground font-medium">
+                          +{engineers.length - 8}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Fable early adopters */}
+          {fableUsers.length > 0 && (
+            <div>
+              <p className="text-xs font-medium text-muted-foreground mb-2 flex items-center gap-1.5">
+                <div className="w-2 h-2 rounded-full bg-rose-500" />
+                Fable early adopters
+                <span className="opacity-60">— {fableUsers.length} engineer{fableUsers.length !== 1 ? 's' : ''} have tried it</span>
+              </p>
+              <TooltipProvider>
+                <div className="flex flex-wrap gap-2">
+                  {fableUsers.map(e => (
+                    <Tooltip key={e.username}>
+                      <TooltipTrigger asChild>
+                        <div className="flex items-center gap-1.5 bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 rounded-full pl-0.5 pr-2.5 py-0.5 cursor-default">
+                          <Avatar className="h-5 w-5">
+                            <AvatarImage src={e.avatar} alt={e.username} />
+                            <AvatarFallback className="text-[8px]">{e.username.slice(0, 2).toUpperCase()}</AvatarFallback>
+                          </Avatar>
+                          <span className="text-xs font-medium">{e.username}</span>
+                          <span className="text-xs text-muted-foreground">{e.breakdown.fable}</span>
+                        </div>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p className="font-medium">{e.username}</p>
+                        <p className="text-xs text-muted-foreground">{e.breakdown.fable} Fable commit{(e.breakdown.fable || 0) !== 1 ? 's' : ''} · {Math.round(((e.breakdown.fable || 0) / e.totalClaudeCommits) * 100)}% of their Claude usage</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  ))}
+                </div>
+              </TooltipProvider>
+            </div>
+          )}
+        </CardContent>
+      )}
+    </Card>
   );
 }
 
@@ -452,9 +567,6 @@ export function Leaderboard({ data, isLoading, hasSelectedRepos = true, toolFilt
                                 modelBreakdown={entry.claudeModelBreakdown}
                                 total={entry.commits}
                               />
-                              {(entry.aiToolBreakdown['claude-coauthor'] > 0 || entry.aiToolBreakdown['claude-generated'] > 0) && (
-                                <ModelInsightsPopover modelBreakdown={entry.claudeModelBreakdown} />
-                              )}
                               <span className="flex items-center gap-1">
                                 <GitCommit className="h-3 w-3" />
                                 {entry.totalCommits} total
