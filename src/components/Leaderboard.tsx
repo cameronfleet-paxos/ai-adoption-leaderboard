@@ -589,15 +589,19 @@ export function Leaderboard({ data, isLoading, hasSelectedRepos = true, toolFilt
                                   .sort((a, b) => b.count - a.count);
                                 const primary = sorted[0];
                                 return (
-                                  <span className="flex items-center gap-1 text-xs text-muted-foreground border-l pl-3 ml-1">
-                                    <div className={cn('w-1.5 h-1.5 rounded-full flex-shrink-0', MODEL_BG[primary.info.color])} />
-                                    <span className="font-medium text-foreground">{primary.info.label}</span>
-                                    <span>{Math.round((primary.count / claudeTotal) * 100)}%</span>
-                                    {sorted.length > 1 && (
-                                      <span className="opacity-50 text-[10px] ml-0.5">
-                                        {sorted.slice(1).map(m => `${m.info.label[0]}:${Math.round((m.count / claudeTotal) * 100)}%`).join(' ')}
+                                  <span className="flex items-center gap-2 text-xs border-l pl-3 ml-1">
+                                    <span className="flex items-center gap-1">
+                                      <div className={cn('w-1.5 h-1.5 rounded-full flex-shrink-0', MODEL_BG[primary.info.color])} />
+                                      <span className="font-medium text-foreground">{primary.info.label}</span>
+                                      <span className="text-muted-foreground">{Math.round((primary.count / claudeTotal) * 100)}%</span>
+                                    </span>
+                                    {sorted.slice(1).map(m => (
+                                      <span key={m.k} className="flex items-center gap-1 text-muted-foreground">
+                                        <div className={cn('w-1.5 h-1.5 rounded-full flex-shrink-0', MODEL_BG[m.info.color])} />
+                                        <span>{m.info.label}</span>
+                                        <span>{Math.round((m.count / claudeTotal) * 100)}%</span>
                                       </span>
-                                    )}
+                                    ))}
                                   </span>
                                 );
                               })()}
