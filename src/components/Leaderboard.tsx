@@ -120,6 +120,7 @@ export function ModelInsightsPanel({ data }: ModelInsightsPanelProps) {
           {/* Primary model breakdown by engineer count */}
           <div>
             <p className="text-xs font-medium text-muted-foreground mb-3">Primary model by engineer</p>
+            <TooltipProvider>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               {MODEL_ORDER.filter(k => byPrimary[k]?.length > 0).map(k => {
                 const engineers = byPrimary[k];
@@ -158,6 +159,7 @@ export function ModelInsightsPanel({ data }: ModelInsightsPanelProps) {
                 );
               })}
             </div>
+            </TooltipProvider>
           </div>
 
           {/* Fable early adopters */}
@@ -237,6 +239,7 @@ const CLAUDE_TOOLS: AITool[] = ['claude-coauthor', 'claude-generated'];
 
 export function Leaderboard({ data, isLoading, hasSelectedRepos = true, toolFilter = 'all' }: LeaderboardProps) {
   const [expandedUser, setExpandedUser] = useState<string | null>(null);
+  const [showModelInsights, setShowModelInsights] = useState(false);
   const [sortField, setSortField] = useState<SortField>('commits');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
   const [detailUser, setDetailUser] = useState<LeaderboardEntry | null>(null);
@@ -482,6 +485,15 @@ export function Leaderboard({ data, isLoading, hasSelectedRepos = true, toolFilt
             </Badge>
           </CardTitle>
           <div className="flex items-center gap-2">
+            <Button
+              variant={showModelInsights ? 'secondary' : 'ghost'}
+              size="sm"
+              onClick={() => setShowModelInsights(v => !v)}
+              className="text-xs text-muted-foreground gap-1.5 mr-2"
+            >
+              <Cpu className="h-3 w-3" />
+              Model insights
+            </Button>
             <span className="text-xs text-muted-foreground mr-1">Sort by:</span>
             <Button
               variant={sortField === 'commits' ? 'default' : 'outline'}
@@ -567,6 +579,28 @@ export function Leaderboard({ data, isLoading, hasSelectedRepos = true, toolFilt
                                 modelBreakdown={entry.claudeModelBreakdown}
                                 total={entry.commits}
                               />
+                              {showModelInsights && (() => {
+                                const bd = entry.claudeModelBreakdown;
+                                const claudeTotal = MODEL_ORDER.reduce((s, k) => s + (bd[k] || 0), 0);
+                                if (claudeTotal === 0) return null;
+                                const sorted = [...MODEL_ORDER]
+                                  .map(k => ({ k, count: bd[k] || 0, info: CLAUDE_MODELS[k] }))
+                                  .filter(m => m.count > 0)
+                                  .sort((a, b) => b.count - a.count);
+                                const primary = sorted[0];
+                                return (
+                                  <span className="flex items-center gap-1 text-xs text-muted-foreground border-l pl-3 ml-1">
+                                    <div className={cn('w-1.5 h-1.5 rounded-full flex-shrink-0', MODEL_BG[primary.info.color])} />
+                                    <span className="font-medium text-foreground">{primary.info.label}</span>
+                                    <span>{Math.round((primary.count / claudeTotal) * 100)}%</span>
+                                    {sorted.length > 1 && (
+                                      <span className="opacity-50 text-[10px] ml-0.5">
+                                        {sorted.slice(1).map(m => `${m.info.label[0]}:${Math.round((m.count / claudeTotal) * 100)}%`).join(' ')}
+                                      </span>
+                                    )}
+                                  </span>
+                                );
+                              })()}
                               <span className="flex items-center gap-1">
                                 <GitCommit className="h-3 w-3" />
                                 {entry.totalCommits} total
