@@ -143,7 +143,7 @@ export function Leaderboard({ data, isLoading, hasSelectedRepos = true, toolFilt
       tool => toolBreakdown[tool] > 0
     );
 
-    const models = (['opus', 'sonnet', 'haiku', 'unknown'] as const).filter(
+    const models = (['opus', 'sonnet', 'haiku', 'fable', 'unknown'] as const).filter(
       model => modelBreakdown[model] > 0
     );
 
