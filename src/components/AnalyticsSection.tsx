@@ -4,10 +4,11 @@ import { BarChart3 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { AIToolDistributionChart } from '@/components/AIToolDistributionChart';
 import { AdoptionCohortChart } from '@/components/AdoptionCohortChart';
-import type { AIToolBreakdown, LeaderboardEntry } from '@/lib/github-client';
+import type { AIToolBreakdown, ClaudeModelBreakdown, LeaderboardEntry } from '@/lib/github-client';
 
 interface AnalyticsSectionProps {
   aiToolBreakdown: AIToolBreakdown;
+  claudeModelBreakdown: ClaudeModelBreakdown;
   totalAICommits: number;
   leaderboard: LeaderboardEntry[];
   isLoading: boolean;
@@ -16,6 +17,7 @@ interface AnalyticsSectionProps {
 
 export function AnalyticsSection({
   aiToolBreakdown,
+  claudeModelBreakdown,
   totalAICommits,
   leaderboard,
   isLoading,
@@ -63,6 +65,7 @@ export function AnalyticsSection({
           <AIToolDistributionChart
             aiToolBreakdown={aiToolBreakdown}
             totalAICommits={totalAICommits}
+            claudeModelBreakdown={claudeModelBreakdown}
           />
           <AdoptionCohortChart leaderboard={leaderboard} />
         </div>

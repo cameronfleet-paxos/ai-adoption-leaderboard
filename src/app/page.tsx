@@ -7,6 +7,7 @@ import { StatsCards } from '@/components/StatsCards';
 import { OverallActivityChart } from '@/components/OverallActivityChart';
 import { AnalyticsSection } from '@/components/AnalyticsSection';
 import { ProductivitySection } from '@/components/ProductivitySection';
+import { CodeReviewLeaderboard } from '@/components/CodeReviewLeaderboard';
 import { Header } from '@/components/Header';
 import { FilterBar } from '@/components/FilterBar';
 import { PRLabelConfig } from '@/components/PRLabelConfig';
@@ -29,15 +30,20 @@ import {
   type CachedPRDetailInput,
   type CachedMergedPRInput,
   type ProductivityCacheInput,
+  type CodeReviewMetrics,
+  type CodeReviewFetchProgress,
+  type CachedReviewInput,
+  type CodeReviewCacheInput,
   fetchCommitDataClient,
   fetchProductivityMetrics,
+  fetchCodeReviewMetrics,
   getDefaultPRLabelConfig,
 } from '@/lib/github-client';
 
 // Check if OAuth is available (client-side check)
 const isOAuthAvailable = !!process.env.NEXT_PUBLIC_GITHUB_CLIENT_ID;
 
-type Tab = 'overview' | 'leaderboard' | 'productivity' | 'settings';
+type Tab = 'overview' | 'leaderboard' | 'productivity' | 'code-reviews' | 'settings';
 
 function HomeContent() {
   const searchParams = useSearchParams();
@@ -80,6 +86,11 @@ function HomeContent() {
   const [productivityProgress, setProductivityProgress] = useState<ProductivityFetchProgress | null>(null);
   const [productivityLoading, setProductivityLoading] = useState(false);
   const [productivityWasCapped, setProductivityWasCapped] = useState(false);
+
+  // Code review metrics state
+  const [codeReviewMetrics, setCodeReviewMetrics] = useState<CodeReviewMetrics | null>(null);
+  const [codeReviewProgress, setCodeReviewProgress] = useState<CodeReviewFetchProgress | null>(null);
+  const [codeReviewLoading, setCodeReviewLoading] = useState(false);
 
   const emptyToolBreakdown = useMemo<AIToolBreakdown>(() => ({
     'claude-coauthor': 0,
@@ -505,6 +516,104 @@ function HomeContent() {
     return () => { cancelled = true; };
   }, [productivityEnabled, token, isAuthenticated, selectedRepos, repositories, data.totalCommits, data.leaderboard, dateRange.startDate, dateRange.endDate, isLoading]);
 
+  // Fetch code review metrics when code-reviews tab is active
+  const codeReviewEnabled = activeTab === 'code-reviews';
+
+  useEffect(() => {
+    if (!codeReviewEnabled || !token || !isAuthenticated || selectedRepos.length === 0) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const run = async () => {
+      setCodeReviewLoading(true);
+      setCodeReviewMetrics(null);
+
+      try {
+        const reposToFetch = repositories.filter(repo => selectedRepos.includes(repo.name));
+        const repoKeys = reposToFetch.map(r => `${r.owner}/${r.name}`);
+        const startISO = new Date(dateRange.startDate).toISOString();
+        const endISO = new Date(dateRange.endDate).toISOString();
+
+        // Read cached data (merged PRs + review details)
+        const cacheEnabled = getDiskCacheEnabled();
+        let cachedReviewDetails: Map<string, CachedReviewInput[]> | undefined;
+        let cachedCodeReviewData: CodeReviewCacheInput | undefined;
+        if (cacheEnabled) {
+          try {
+            const cacheRes = await fetch(`/api/cache?repos=${repoKeys.join(',')}&start=${startISO}&end=${endISO}&reviewDetailKeys=`);
+            if (cacheRes.ok) {
+              const cacheData = await cacheRes.json();
+              if (cacheData.reviewDetails && Object.keys(cacheData.reviewDetails).length > 0) {
+                cachedReviewDetails = new Map(Object.entries(cacheData.reviewDetails) as [string, CachedReviewInput[]][]);
+              }
+              cachedCodeReviewData = {
+                reviewDetails: cachedReviewDetails,
+                mergedPRs: cacheData.mergedPRs as Record<string, CachedMergedPRInput[]>,
+                coverage: cacheData.coverage as Record<string, { mergedPRs: { gaps: Array<{ start: string; end: string }> } }>,
+              };
+            }
+          } catch (e) {
+            console.warn('Failed to read review cache:', e);
+          }
+        }
+
+        const result = await fetchCodeReviewMetrics(
+          token,
+          reposToFetch,
+          { start: new Date(dateRange.startDate), end: new Date(dateRange.endDate) },
+          (p) => { if (!cancelled) setCodeReviewProgress(p); },
+          cachedReviewDetails,
+          cachedCodeReviewData,
+        );
+
+        if (!cancelled) {
+          setCodeReviewMetrics(result);
+          setCodeReviewProgress(null);
+
+          // Write new review details + merged PRs to cache (fire-and-forget)
+          const rawResult = result as typeof result & {
+            _newReviewDetails?: Record<string, CachedReviewInput[]>;
+            _rawMergedPRs?: Record<string, CachedMergedPRInput[]>;
+          };
+          if (cacheEnabled) {
+            const cacheBody: Record<string, unknown> = {};
+            if (rawResult._newReviewDetails && Object.keys(rawResult._newReviewDetails).length > 0) {
+              cacheBody.reviewDetails = rawResult._newReviewDetails;
+            }
+            if (rawResult._rawMergedPRs && Object.keys(rawResult._rawMergedPRs).length > 0) {
+              cacheBody.mergedPRs = rawResult._rawMergedPRs;
+              cacheBody.coverageExpansions = repoKeys.map(k => ({
+                repoKey: k,
+                start: startISO,
+                end: endISO,
+                type: 'mergedPRs',
+              }));
+            }
+            if (Object.keys(cacheBody).length > 0) {
+              fetch('/api/cache', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(cacheBody),
+              }).catch(e => console.warn('Failed to write review cache:', e));
+            }
+          }
+        }
+      } catch (err) {
+        console.error('Failed to fetch code review metrics:', err);
+      } finally {
+        if (!cancelled) {
+          setCodeReviewLoading(false);
+          setCodeReviewProgress(null);
+        }
+      }
+    };
+
+    run();
+    return () => { cancelled = true; };
+  }, [codeReviewEnabled, token, isAuthenticated, selectedRepos, repositories, dateRange.startDate, dateRange.endDate]);
+
   const handleLogout = useCallback(async () => {
     // Clear server-side session if using OAuth
     if (isOAuthAvailable) {
@@ -680,6 +789,7 @@ function HomeContent() {
 
             <AnalyticsSection
               aiToolBreakdown={data.aiToolBreakdown}
+              claudeModelBreakdown={data.claudeModelBreakdown}
               totalAICommits={data.aiCommits}
               leaderboard={data.leaderboard}
               isLoading={isLoading}
@@ -706,6 +816,16 @@ function HomeContent() {
             hasSelectedRepos={selectedRepos.length > 0}
             progress={productivityProgress}
             wasCapped={productivityWasCapped}
+          />
+        );
+
+      case 'code-reviews':
+        return (
+          <CodeReviewLeaderboard
+            metrics={codeReviewMetrics}
+            isLoading={codeReviewLoading && !codeReviewProgress}
+            hasSelectedRepos={selectedRepos.length > 0}
+            progress={codeReviewProgress}
           />
         );
 
@@ -763,6 +883,9 @@ function HomeContent() {
             </TabsTrigger>
             <TabsTrigger active={activeTab === 'productivity'} onClick={() => setActiveTab('productivity')}>
               Productivity
+            </TabsTrigger>
+            <TabsTrigger active={activeTab === 'code-reviews'} onClick={() => setActiveTab('code-reviews')}>
+              Code Reviews
             </TabsTrigger>
             <TabsTrigger active={activeTab === 'settings'} onClick={() => setActiveTab('settings')}>
               Settings

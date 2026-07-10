@@ -7,7 +7,7 @@
 
 // Re-export types from the original github.ts
 export type AITool = 'claude-coauthor' | 'claude-generated' | 'copilot' | 'cursor' | 'codex' | 'gemini' | 'agent';
-export type ClaudeModel = 'opus' | 'sonnet' | 'haiku' | 'unknown';
+export type ClaudeModel = 'opus' | 'sonnet' | 'haiku' | 'fable' | 'unknown';
 
 export interface AIToolInfo {
   id: AITool;
@@ -83,6 +83,11 @@ export const CLAUDE_MODELS: Record<ClaudeModel, ClaudeModelInfo> = {
     label: 'Haiku',
     color: 'bg-emerald-500',
   },
+  'fable': {
+    id: 'fable',
+    label: 'Fable',
+    color: 'bg-rose-500',
+  },
   'unknown': {
     id: 'unknown',
     label: 'Claude',
@@ -112,6 +117,7 @@ export interface ClaudeModelBreakdown {
   opus: number;
   sonnet: number;
   haiku: number;
+  fable: number;
   unknown: number;
 }
 
@@ -473,6 +479,7 @@ const emptyModelBreakdown = (): ClaudeModelBreakdown => ({
   opus: 0,
   sonnet: 0,
   haiku: 0,
+  fable: 0,
   unknown: 0,
 });
 
@@ -490,6 +497,9 @@ function extractClaudeModel(message: string): ClaudeModel {
   }
   if (lowerMessage.includes('claude haiku')) {
     return 'haiku';
+  }
+  if (lowerMessage.includes('claude fable')) {
+    return 'fable';
   }
 
   return 'unknown';
@@ -1789,6 +1799,585 @@ export async function fetchProductivityMetrics(
   }
 
   return Object.assign(metricsResult, { _newPRDetails: newPRDetailsForCache, _rawMergedPRs });
+}
+
+// --- Code Review Metrics Types ---
+
+export type ReviewState = 'APPROVED' | 'CHANGES_REQUESTED' | 'COMMENTED';
+
+export interface ReviewEntry {
+  prNumber: number;
+  repo: string;
+  prTitle: string;
+  prAuthor: string;
+  state: ReviewState;
+  submittedAt: string;
+  prUrl: string;
+}
+
+export interface CodeReviewerMetrics {
+  username: string;
+  avatarUrl: string;
+  totalReviews: number;
+  prsReviewed: number;
+  approvals: number;
+  changesRequested: number;
+  comments: number;
+  recentReviews: ReviewEntry[];
+}
+
+export interface CodeReviewMetrics {
+  reviewers: CodeReviewerMetrics[];
+  totalReviewsAnalyzed: number;
+  totalPRsWithReviews: number;
+}
+
+export interface CodeReviewFetchProgress {
+  phase: 'listing-prs' | 'fetching-reviews' | 'computing';
+  completedPRs: number;
+  totalPRs: number;
+  completedRepos?: number;
+  totalRepos?: number;
+  activeRepos?: string[];
+}
+
+// --- End Code Review Metrics Types ---
+
+/**
+ * Batch-fetch review details using GitHub GraphQL API.
+ * Returns per-PR list of reviews with reviewer identity.
+ */
+async function fetchReviewsBatchGraphQL(
+  token: string,
+  prs: Array<{ number: number; repo: Repository; author: string; title: string }>,
+): Promise<Map<string, Array<{
+  reviewerLogin: string;
+  reviewerAvatarUrl: string;
+  state: ReviewState;
+  submittedAt: string;
+  prTitle: string;
+  prAuthor: string;
+  prUrl: string;
+}>>> {
+  const fragments = prs.map((pr, i) => `
+    pr${i}: repository(owner: "${pr.repo.owner}", name: "${pr.repo.name}") {
+      pullRequest(number: ${pr.number}) {
+        url
+        reviews(first: 100) {
+          nodes {
+            state
+            submittedAt
+            author {
+              ... on User { __typename login avatarUrl }
+              ... on Bot { __typename login }
+            }
+          }
+        }
+      }
+    }`).join('\n');
+
+  const query = `query { ${fragments} }`;
+
+  const response = await fetch('https://api.github.com/graphql', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ query }),
+  });
+
+  const results = new Map<string, Array<{
+    reviewerLogin: string;
+    reviewerAvatarUrl: string;
+    state: ReviewState;
+    submittedAt: string;
+    prTitle: string;
+    prAuthor: string;
+    prUrl: string;
+  }>>();
+
+  if (!response.ok) {
+    console.warn('GraphQL API error (reviews):', response.status);
+    return results;
+  }
+
+  const json = await response.json();
+  if (json.errors) {
+    console.warn('GraphQL partial errors (reviews):', json.errors.length, 'errors');
+  }
+
+  const data = json.data || {};
+
+  for (let i = 0; i < prs.length; i++) {
+    const prData = data[`pr${i}`]?.pullRequest;
+    if (!prData) continue;
+
+    const key = `${prs[i].repo.owner}/${prs[i].repo.name}#${prs[i].number}`;
+    const prUrl = prData.url || `https://github.com/${prs[i].repo.owner}/${prs[i].repo.name}/pull/${prs[i].number}`;
+    const reviews: Array<{
+      reviewerLogin: string;
+      reviewerAvatarUrl: string;
+      state: ReviewState;
+      submittedAt: string;
+      prTitle: string;
+      prAuthor: string;
+      prUrl: string;
+    }> = [];
+
+    const reviewNodes = prData.reviews?.nodes || [];
+    for (const review of reviewNodes) {
+      // Skip dismissed and pending reviews
+      if (review.state === 'DISMISSED' || review.state === 'PENDING') continue;
+      // Skip bot reviewers
+      if (!review.author || review.author.__typename === 'Bot') continue;
+      if (review.author.login?.endsWith('[bot]')) continue;
+      // Skip self-reviews
+      if (review.author.login === prs[i].author) continue;
+
+      const state = review.state as ReviewState;
+      if (state !== 'APPROVED' && state !== 'CHANGES_REQUESTED' && state !== 'COMMENTED') continue;
+
+      reviews.push({
+        reviewerLogin: review.author.login || '',
+        reviewerAvatarUrl: review.author.avatarUrl || '',
+        state,
+        submittedAt: review.submittedAt || '',
+        prTitle: prs[i].title,
+        prAuthor: prs[i].author,
+        prUrl,
+      });
+    }
+
+    results.set(key, reviews);
+  }
+
+  return results;
+}
+
+export interface CachedReviewInput {
+  reviewerLogin: string;
+  reviewerAvatarUrl: string;
+  state: string;
+  submittedAt: string;
+  prTitle: string;
+  prAuthor: string;
+  prUrl: string;
+}
+
+export interface CodeReviewCacheInput {
+  mergedPRs?: Record<string, CachedMergedPRInput[]>;
+  coverage?: Record<string, { mergedPRs: { gaps: Array<{ start: string; end: string }> } }>;
+  reviewDetails?: Map<string, CachedReviewInput[]>;
+}
+
+/**
+ * Fetch code review metrics: who is reviewing the most PRs across selected repos.
+ */
+export async function fetchCodeReviewMetrics(
+  token: string,
+  repositories: Repository[],
+  dateRange: { start: Date; end: Date },
+  onProgress?: (progress: CodeReviewFetchProgress) => void,
+  cachedReviewDetails?: Map<string, CachedReviewInput[]>,
+  cachedData?: CodeReviewCacheInput,
+): Promise<CodeReviewMetrics> {
+  const headers: HeadersInit = {
+    'Accept': 'application/vnd.github.v3+json',
+    'Authorization': `Bearer ${token}`,
+  };
+
+  const startDate = dateRange.start;
+  const endDate = dateRange.end;
+
+  // Phase 1: List merged PRs per repo (use cache where available)
+  const allPRs: Array<{
+    number: number;
+    repo: Repository;
+    author: string;
+    title: string;
+    mergedAt: string;
+  }> = [];
+
+  // Load cached merged PR listings
+  const reposToListPRs: Repository[] = [];
+  const repoMergedPRGaps = new Map<string, Array<{ start: string; end: string }>>();
+  for (const repo of repositories) {
+    const repoKey = `${repo.owner}/${repo.name}`;
+    const coverage = cachedData?.coverage?.[repoKey];
+    const cached = cachedData?.mergedPRs?.[repoKey];
+
+    if (cached) {
+      const seenNumbers = new Set<number>();
+      for (const pr of cached) {
+        if (seenNumbers.has(pr.number)) continue;
+        seenNumbers.add(pr.number);
+        allPRs.push({
+          number: pr.number,
+          repo: { owner: pr.repoOwner, name: pr.repoName, displayName: pr.repoDisplayName },
+          author: pr.author,
+          title: pr.title,
+          mergedAt: pr.mergedAt,
+        });
+      }
+    }
+
+    if (!coverage || coverage.mergedPRs.gaps.length > 0) {
+      reposToListPRs.push(repo);
+      if (coverage) {
+        repoMergedPRGaps.set(repoKey, coverage.mergedPRs.gaps);
+      }
+    }
+  }
+
+  const existingPRKeys = new Set(allPRs.map(pr => `${pr.repo.owner}/${pr.repo.name}#${pr.number}`));
+
+  let searchTimestamps: number[] = [];
+  const throttleSearch = async () => {
+    const now = Date.now();
+    searchTimestamps = searchTimestamps.filter(t => now - t < 60000);
+    if (searchTimestamps.length >= 28) {
+      const oldest = searchTimestamps[0];
+      const waitMs = 60000 - (now - oldest) + 1000;
+      if (waitMs > 0) await new Promise(r => setTimeout(r, waitMs));
+    }
+    searchTimestamps.push(Date.now());
+  };
+
+  const searchMergedPRs = async (repo: Repository, rangeStart: string, rangeEnd: string) => {
+    let page = 1;
+    let hasMore = true;
+
+    while (hasMore) {
+      const q = encodeURIComponent(
+        `repo:${repo.owner}/${repo.name} is:pr is:merged merged:${rangeStart}..${rangeEnd}`
+      );
+      const url = `https://api.github.com/search/issues?q=${q}&per_page=100&page=${page}&sort=updated&order=desc`;
+
+      await throttleSearch();
+      let response = await fetch(url, { headers });
+
+      if (response.status === 403 || response.status === 429) {
+        const retryAfter = response.headers.get('retry-after');
+        const resetHeader = response.headers.get('x-ratelimit-reset');
+        let waitMs = 10000;
+        if (retryAfter) {
+          waitMs = parseInt(retryAfter, 10) * 1000;
+        } else if (resetHeader) {
+          waitMs = Math.max(0, parseInt(resetHeader, 10) * 1000 - Date.now()) + 1000;
+        }
+        await new Promise(r => setTimeout(r, Math.min(waitMs, 60000)));
+        response = await fetch(url, { headers });
+      }
+
+      if (!response.ok) {
+        console.warn(`Search API error listing PRs for ${repo.name}:`, response.status);
+        break;
+      }
+
+      const data = await response.json();
+      const items = data.items || [];
+
+      for (const pr of items) {
+        const mergedAt = pr.pull_request?.merged_at;
+        if (!mergedAt) continue;
+
+        const prKey = `${repo.owner}/${repo.name}#${pr.number}`;
+        if (existingPRKeys.has(prKey)) continue;
+        existingPRKeys.add(prKey);
+
+        allPRs.push({
+          number: pr.number,
+          repo,
+          author: pr.user?.login || '',
+          title: pr.title || '',
+          mergedAt,
+        });
+      }
+
+      hasMore = items.length === 100;
+      page++;
+      if (page > 10) break;
+    }
+  };
+
+  const buildMonthlyChunks = (from: Date, to: Date): Array<{ start: string; end: string }> => {
+    const chunks: Array<{ start: string; end: string }> = [];
+    const cursor = new Date(from);
+    cursor.setDate(1);
+    while (cursor < to) {
+      const chunkStart = new Date(Math.max(cursor.getTime(), from.getTime()));
+      const nextMonth = new Date(cursor);
+      nextMonth.setMonth(nextMonth.getMonth() + 1);
+      const chunkEnd = new Date(Math.min(nextMonth.getTime(), to.getTime()));
+      chunks.push({
+        start: chunkStart.toISOString().split('T')[0],
+        end: chunkEnd.toISOString().split('T')[0],
+      });
+      cursor.setMonth(cursor.getMonth() + 1);
+    }
+    return chunks;
+  };
+
+  const activeRepoNames = new Set<string>();
+  let completedRepos = repositories.length - reposToListPRs.length;
+
+  onProgress?.({
+    phase: 'listing-prs',
+    completedPRs: allPRs.length,
+    totalPRs: allPRs.length,
+    completedRepos,
+    totalRepos: repositories.length,
+    activeRepos: [],
+  });
+
+  if (reposToListPRs.length > 0) {
+    await runWithConcurrency(reposToListPRs, 3, async (repo) => {
+      activeRepoNames.add(repo.displayName);
+      onProgress?.({
+        phase: 'listing-prs',
+        completedPRs: allPRs.length,
+        totalPRs: allPRs.length,
+        completedRepos,
+        totalRepos: repositories.length,
+        activeRepos: Array.from(activeRepoNames),
+      });
+
+      const repoKey = `${repo.owner}/${repo.name}`;
+      const gaps = repoMergedPRGaps.get(repoKey);
+
+      const ranges = gaps && gaps.length > 0
+        ? gaps.map(g => ({ start: g.start.split('T')[0], end: g.end.split('T')[0] }))
+        : [{ start: startDate.toISOString().split('T')[0], end: endDate.toISOString().split('T')[0] }];
+
+      for (const range of ranges) {
+        const rangeDays = (new Date(range.end).getTime() - new Date(range.start).getTime()) / (1000 * 60 * 60 * 24);
+        if (rangeDays > 90) {
+          const chunks = buildMonthlyChunks(new Date(range.start), new Date(range.end));
+          for (const chunk of chunks) {
+            await searchMergedPRs(repo, chunk.start, chunk.end);
+          }
+        } else {
+          await searchMergedPRs(repo, range.start, range.end);
+        }
+      }
+
+      activeRepoNames.delete(repo.displayName);
+      completedRepos++;
+    });
+  }
+
+  // Cap PRs
+  const cappedPRs = allPRs.length > PR_CAP
+    ? allPRs.sort((a, b) => new Date(b.mergedAt).getTime() - new Date(a.mergedAt).getTime()).slice(0, PR_CAP)
+    : allPRs;
+
+  const totalPRs = cappedPRs.length;
+  if (totalPRs === 0) {
+    return { reviewers: [], totalReviewsAnalyzed: 0, totalPRsWithReviews: 0 };
+  }
+
+  // Phase 2: Batch-fetch reviews via GraphQL (use cache where available)
+  const BATCH_SIZE = 10;
+  let completedDetails = 0;
+  onProgress?.({ phase: 'fetching-reviews', completedPRs: 0, totalPRs });
+
+  const allReviews: Array<{
+    reviewerLogin: string;
+    reviewerAvatarUrl: string;
+    state: ReviewState;
+    submittedAt: string;
+    prNumber: number;
+    repo: string;
+    prTitle: string;
+    prAuthor: string;
+    prUrl: string;
+  }> = [];
+
+  const newReviewDetailsForCache: Record<string, CachedReviewInput[]> = {};
+
+  // Split into cached vs uncached PRs
+  const uncachedPRs: typeof cappedPRs = [];
+  for (const pr of cappedPRs) {
+    const key = `${pr.repo.owner}/${pr.repo.name}#${pr.number}`;
+    const cached = cachedReviewDetails?.get(key);
+
+    if (cached) {
+      for (const review of cached) {
+        const state = review.state as ReviewState;
+        if (state !== 'APPROVED' && state !== 'CHANGES_REQUESTED' && state !== 'COMMENTED') continue;
+        if (review.submittedAt) {
+          const reviewDate = new Date(review.submittedAt);
+          if (reviewDate < startDate || reviewDate > endDate) continue;
+        }
+        allReviews.push({
+          reviewerLogin: review.reviewerLogin,
+          reviewerAvatarUrl: review.reviewerAvatarUrl,
+          state,
+          submittedAt: review.submittedAt,
+          prTitle: review.prTitle,
+          prAuthor: review.prAuthor,
+          prUrl: review.prUrl,
+          prNumber: pr.number,
+          repo: pr.repo.displayName,
+        });
+      }
+      completedDetails++;
+    } else {
+      uncachedPRs.push(pr);
+    }
+  }
+
+  onProgress?.({ phase: 'fetching-reviews', completedPRs: completedDetails, totalPRs });
+
+  if (uncachedPRs.length > 0) {
+    const batches: Array<typeof uncachedPRs> = [];
+    for (let i = 0; i < uncachedPRs.length; i += BATCH_SIZE) {
+      batches.push(uncachedPRs.slice(i, i + BATCH_SIZE));
+    }
+
+    await runWithConcurrency(batches, 5, async (batch) => {
+      try {
+        const reviewsMap = await fetchReviewsBatchGraphQL(token, batch);
+
+        for (const pr of batch) {
+          const key = `${pr.repo.owner}/${pr.repo.name}#${pr.number}`;
+          const reviews = reviewsMap.get(key) || [];
+
+          // Store all reviews for cache (unfiltered by date)
+          newReviewDetailsForCache[key] = reviews.map(r => ({
+            reviewerLogin: r.reviewerLogin,
+            reviewerAvatarUrl: r.reviewerAvatarUrl,
+            state: r.state,
+            submittedAt: r.submittedAt,
+            prTitle: r.prTitle,
+            prAuthor: r.prAuthor,
+            prUrl: r.prUrl,
+          }));
+
+          for (const review of reviews) {
+            // Filter by submittedAt within date range
+            if (review.submittedAt) {
+              const reviewDate = new Date(review.submittedAt);
+              if (reviewDate < startDate || reviewDate > endDate) continue;
+            }
+            allReviews.push({
+              ...review,
+              prNumber: pr.number,
+              repo: pr.repo.displayName,
+            });
+          }
+        }
+      } catch (err) {
+        console.warn('GraphQL batch failed (reviews), skipping batch:', err);
+      }
+
+      completedDetails += batch.length;
+      onProgress?.({ phase: 'fetching-reviews', completedPRs: completedDetails, totalPRs });
+    });
+  }
+
+  // Phase 3: Aggregate per reviewer
+  onProgress?.({ phase: 'computing', completedPRs: totalPRs, totalPRs });
+
+  const reviewerMap = new Map<string, {
+    avatarUrl: string;
+    approvals: number;
+    changesRequested: number;
+    comments: number;
+    prsReviewed: Set<string>;
+    recentReviews: ReviewEntry[];
+  }>();
+
+  let totalPRsWithReviews = 0;
+  const prsWithReviewsSeen = new Set<string>();
+
+  for (const review of allReviews) {
+    const prKey = `${review.repo}#${review.prNumber}`;
+    if (!prsWithReviewsSeen.has(prKey)) {
+      prsWithReviewsSeen.add(prKey);
+      totalPRsWithReviews++;
+    }
+
+    let entry = reviewerMap.get(review.reviewerLogin);
+    if (!entry) {
+      entry = {
+        avatarUrl: review.reviewerAvatarUrl,
+        approvals: 0,
+        changesRequested: 0,
+        comments: 0,
+        prsReviewed: new Set(),
+        recentReviews: [],
+      };
+      reviewerMap.set(review.reviewerLogin, entry);
+    }
+
+    entry.prsReviewed.add(prKey);
+
+    switch (review.state) {
+      case 'APPROVED': entry.approvals++; break;
+      case 'CHANGES_REQUESTED': entry.changesRequested++; break;
+      case 'COMMENTED': entry.comments++; break;
+    }
+
+    // Keep up to 20 most recent reviews
+    if (entry.recentReviews.length < 20) {
+      entry.recentReviews.push({
+        prNumber: review.prNumber,
+        repo: review.repo,
+        prTitle: review.prTitle,
+        prAuthor: review.prAuthor,
+        state: review.state,
+        submittedAt: review.submittedAt,
+        prUrl: review.prUrl,
+      });
+    }
+  }
+
+  // Build sorted reviewer list
+  const reviewers: CodeReviewerMetrics[] = [];
+  for (const [username, entry] of reviewerMap) {
+    const totalReviews = entry.approvals + entry.changesRequested + entry.comments;
+    reviewers.push({
+      username,
+      avatarUrl: entry.avatarUrl,
+      totalReviews,
+      prsReviewed: entry.prsReviewed.size,
+      approvals: entry.approvals,
+      changesRequested: entry.changesRequested,
+      comments: entry.comments,
+      recentReviews: entry.recentReviews.sort(
+        (a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime()
+      ),
+    });
+  }
+
+  reviewers.sort((a, b) => b.totalReviews - a.totalReviews || b.prsReviewed - a.prsReviewed);
+
+  const result: CodeReviewMetrics = {
+    reviewers,
+    totalReviewsAnalyzed: allReviews.length,
+    totalPRsWithReviews,
+  };
+
+  // Build merged PR listing for cache write-back
+  const _rawMergedPRs: Record<string, CachedMergedPRInput[]> = {};
+  for (const pr of allPRs) {
+    const repoKey = `${pr.repo.owner}/${pr.repo.name}`;
+    if (!_rawMergedPRs[repoKey]) _rawMergedPRs[repoKey] = [];
+    _rawMergedPRs[repoKey].push({
+      number: pr.number,
+      repoOwner: pr.repo.owner,
+      repoName: pr.repo.name,
+      repoDisplayName: pr.repo.displayName,
+      author: pr.author,
+      title: pr.title,
+      body: '',
+      mergedAt: pr.mergedAt,
+    });
+  }
+
+  return Object.assign(result, { _newReviewDetails: newReviewDetailsForCache, _rawMergedPRs });
 }
 
 /**
