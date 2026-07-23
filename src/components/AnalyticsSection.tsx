@@ -1,5 +1,6 @@
 'use client';
 
+import { useMemo } from 'react';
 import { BarChart3 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { AIToolDistributionChart } from '@/components/AIToolDistributionChart';
@@ -55,6 +56,11 @@ export function AnalyticsSection({
     );
   }
 
+  const allCommitDetails = useMemo(
+    () => leaderboard.flatMap(entry => entry.commitDetails),
+    [leaderboard]
+  );
+
   return (
     <Card className="mb-8">
       <CardHeader className="pb-4">
@@ -66,6 +72,7 @@ export function AnalyticsSection({
             aiToolBreakdown={aiToolBreakdown}
             totalAICommits={totalAICommits}
             claudeModelBreakdown={claudeModelBreakdown}
+            commitDetails={allCommitDetails}
           />
           <AdoptionCohortChart leaderboard={leaderboard} />
         </div>
